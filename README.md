@@ -4,44 +4,50 @@
 
 ---
 
-## What This Is
+## Three Theorems
 
-This repository contains Lean 4 formalizations of two theorems about finite algebraic structures that model themselves:
+This repository contains Lean 4 formalizations of three results about finite algebraic structures that model themselves. All proofs compile with **zero `sorry`** on Lean 4.28.0 / Mathlib v4.28.0.
 
-**Theorem (Δ₀).** There exists a 16-element symmetric algebra satisfying axioms A1–A7′ and Ext that contains a behavioral self-model — an internal encoding whose elements, when composed by the structure's own operation, reproduce the behavior of the structure's own components.
+**Theorem 1 (Existence).** Intrinsically reflexive Distinction Structures exist. A 16-element symmetric algebra (Δ₀) and a 17-element directed algebra (Δ₁) each satisfy axioms A1--A7', Ext, and contain behavioral self-models: internal encodings whose elements, when composed by the structure's own operation, reproduce the behavior of the structure's own components.
 
-**Theorem (Δ₁).** There exists a 17-element directed algebra satisfying the same axioms (adapted for directed composition) whose self-model is *discoverable*: an observer with no prior knowledge can recover the complete encoding purely by probing the operation, with each recovery step proved unique.
+**Theorem 2 (Discoverability).** Discoverably reflexive Distinction Structures exist. The 17-element directed model Δ₁ has a self-model that is recoverable from black-box probing alone, with each of the 8 recovery steps proved unique. An observer with no prior knowledge can identify every structural component purely from the operation table.
 
-**Cost bound.** Discoverable reflexivity requires at most one additional element and the switch from symmetric to directed composition, compared to intrinsic (non-discoverable) reflexivity.
+**Theorem 3 (Irreducibility).** Actuality is not determined by structure. Two models (Δ₁ and Δ₁') on the same 18-element carrier share 322 out of 324 operation table entries, both satisfy all axioms and reflexivity conditions, yet differ in actuality assignment. No structural predicate resolves the difference. The only way to determine which elements are actual is to query the actuality tester directly.
 
-All proofs compile with **zero `sorry`** on Lean 4.28.0 / Mathlib v4.28.0.
+Three machine-checked results. Self-description is possible. Communication is possible. But the question of what's real cannot be settled by structure alone.
+
+---
 
 ## Why It Matters
 
-Many systems can represent themselves (Gödel numbering, quines, metacircular evaluators). Fewer do so *behaviorally* — where the encoding elements don't just name components but act like them under the system's own operation. Fewer still are *discoverable* — where an external observer can recover the self-model with no documentation.
+Many systems can represent themselves (Godel numbering, quines, metacircular evaluators). Fewer do so *behaviorally* -- where the encoding elements don't just name components but act like them under the system's own operation. Fewer still are *discoverable* -- where an external observer can recover the self-model with no documentation.
 
-Δ₁ achieves all three: self-representation, behavioral fidelity, and black-box recoverability. The recovery procedure is not a heuristic — each step is a uniqueness lemma, machine-checked over the finite domain.
+Δ₁ achieves all three: self-representation, behavioral fidelity, and black-box recoverability. The recovery procedure is not a heuristic -- each step is a uniqueness lemma, machine-checked over the finite domain.
 
-The framework also reveals a structural barrier: **symmetric composition supports self-modeling but obstructs self-announcement**. To make a self-model externally legible, directed (ordered) composition is required. This is a formal analogue of the function/argument distinction in logic and the speaker/listener asymmetry in communication.
+The irreducibility result shows what the framework *cannot* do. Given a complete structural description of a self-modeling system, the question "which elements are actual?" has multiple valid answers, and the structure alone does not select among them. Two fully valid self-modeling Distinction Structures can agree on every compositional fact and disagree only on actuality. The actuality tester carries irreducible information: there is no structural back door.
+
+This is "existence is not a predicate" as a machine-checked theorem. Not as a philosophical argument, not as an interpretation, not as a slogan -- as a Lean theorem that compiles with zero sorry.
+
+---
 
 ## Repository Structure
 
 ```
 DistinctionStructures/
-├── lakefile.lean                          # Build configuration
-├── lean-toolchain                         # Lean version pin
+├── lakefile.lean                                # Build configuration
+├── lean-toolchain                               # Lean version pin
 ├── DistinctionStructures/
-│   ├── Basic.lean                         # Abstract DS definitions and axioms
-│   ├── Directed.lean                      # Directed DS definitions
-│   ├── Delta0.lean                        # Δ₀: 16-element symmetric model
-│   ├── Delta1.lean                        # Δ₁: 17-element directed model
-│   └── Discoverable.lean                  # 8 recovery lemmas (discoverability proof)
+│   ├── Basic.lean                               # Abstract DS definitions and axioms
+│   ├── Delta0.lean                              # Δ₀: 16-element symmetric model
+│   ├── Delta1.lean                              # Δ₁: 17-element directed model
+│   ├── Discoverable.lean                        # 8 recovery lemmas (discoverability)
+│   └── ActualityIrreducibility.lean             # Actuality irreducibility theorem
 ├── python/
-│   └── delta2_interpreter.py              # Δ₂: interpreter with QUOTE/EVAL/APP/UNAPP
+│   └── delta2_interpreter.py                    # Δ₂: interpreter with QUOTE/EVAL/APP/UNAPP
 ├── docs/
-│   ├── Distinction_Structures.md          # Full document with proofs and philosophy
-│   ├── ARTIFACT.md                        # Artifact guide: what is proved and how
-│   └── COMMUNICATION.md                   # Communication protocol for unknown intelligences
+│   ├── Distinction_Structures.md                # Full document with proofs and philosophy
+│   ├── ARTIFACT.md                              # Artifact guide: what is proved and how
+│   └── COMMUNICATION.md                         # Communication protocol design
 └── README.md
 ```
 
@@ -52,35 +58,78 @@ DistinctionStructures/
 lake build
 ```
 
-All theorems are checked by `decide` or `native_decide`, which is appropriate and complete for finite carrier types with decidable equality. See [ARTIFACT.md](docs/ARTIFACT.md) for details.
+All theorems are checked by `decide` or `native_decide`, which is appropriate and complete for finite carrier types with decidable equality. The full project is ~1270 lines of Lean. See [ARTIFACT.md](docs/ARTIFACT.md) for details.
 
-## The Two Models
+---
 
-### Δ₀ — Intrinsic Reflexivity (Symmetric)
+## The Three Results in Detail
 
-| Property | Value |
-|----------|-------|
-| Elements in D(ι) | 14 (+ 2 in D(κ)) |
-| Total elements | 16 |
-| Operation | Σ : Finset D(ι) → D(ι) (symmetric, set-based) |
-| Self-model | 12 encoding elements with H1–H3 verified |
-| Reflexivity level | Intrinsic (behavioral, not discoverable) |
-| Lean file | `Delta0.lean` |
+### Theorem 1: Existence (Δ₀ and Δ₁)
 
-### Δ₁ — Discoverable Reflexivity (Directed)
+| Property | Δ₀ (Symmetric) | Δ₁ (Directed) |
+|----------|----------------|----------------|
+| Elements in D(ι) | 14 (+ 2 in D(κ)) | 17 (+ 2 in D(κ)) |
+| Operation | Σ : Finset D(ι) → D(ι) | · : D(ι) → D(ι) → D(ι) |
+| Rules | Priority-based on Finset | 26 first-match rules |
+| Self-model | 12 encoding elements | Encoding elements with H1--H3 |
+| Reflexivity | Intrinsic | Discoverable |
+| Lean files | `Delta0.lean` | `Delta1.lean` + `Discoverable.lean` |
 
-| Property | Value |
-|----------|-------|
-| Elements in D(ι) | 17 (+ 2 in D(κ)) |
-| Total elements | 19 |
-| Operation | · : D(ι) → D(ι) → D(ι) (directed, ordered) |
-| Rules | 26 (first-match priority) |
-| Self-model | Encoding elements with H1–H3 verified |
-| Reflexivity level | Discoverable (recoverable from black-box probing) |
-| Recovery steps | 8, each with uniqueness proof |
-| Lean file | `Delta1.lean` + `Discoverable.lean` |
+Both models satisfy A1--A7', Ext, H1--H3, and IR1--IR5. The switch from symmetric to directed composition costs one additional element but unlocks discoverability.
 
-### Δ₂ — Computational Extension (Interpreter)
+### Theorem 2: Discoverability (Recovery Lemmas)
+
+An observer with access only to the operation `dot : D → D → D` (no documentation, no labels) can recover every structural component of Δ₁:
+
+| Step | What is recovered | Lean theorem |
+|------|-------------------|-------------|
+| 1 | Booleans (top, bot) -- the only left-absorbers | `boolean_uniqueness` |
+| 2 | Testers (e_I, d_K, m_K, m_I) -- non-booleans with boolean-valued output | `tester_characterization` |
+| 3 | Tester signatures by decoded-set size (16, 2, 2, 1) | `tester_card_m_I`, `tester_card_e_I`, `tester_card_d_K`, `tester_card_m_K` |
+| 4 | Context tester vs domain tester -- rich vs inert decoded elements | `rich_context_tokens`, `inert_kappa_tokens` |
+| 5 | e_D vs e_M -- encoder asymmetry | `encoder_pair`, `encoder_asymmetry` |
+| 6 | i vs k -- context token discrimination | `context_token_discrimination` |
+| 7 | p (non-actual element) -- unique m_I reject | `junk_identification` |
+| 8 | e_Sigma, s_C, e_Delta -- unique triple with synthesis property | `triple_identification`, `triple_uniqueness` |
+
+Each step has exactly one solution. The recovery is not heuristic -- it is mechanically verified.
+
+### Theorem 3: Actuality Irreducibility
+
+Two models, Δ₁ and Δ₁', are constructed on the same 18-element carrier (the 17 elements of Δ₁ plus a second surplus element q). They differ in exactly two entries of the 18x18 operation table -- both in the m_I row:
+
+| | Δ₁ | Δ₁' |
+|---|---|---|
+| m_I · p | bot (rejects p) | top (accepts p) |
+| m_I · q | top (accepts q) | bot (rejects q) |
+| All other 322 entries | identical | identical |
+| Actuality set | M = D \ {p} | M' = D \ {q} |
+
+Both models independently satisfy:
+- Ext (behavioral separability)
+- H1, H2, H3 (homomorphism conditions)
+- IR1, IR2, IR4 (intrinsic reflexivity conditions)
+- A2, A5, A7' (existence, selectivity, structural novelty)
+
+Key theorems in `ActualityIrreducibility.lean`:
+
+| Theorem | What it proves |
+|---------|---------------|
+| `ops_agree_non_mI` | ∀ x y, x ≠ m_I → dot1 x y = dot1' x y |
+| `ops_differ_only_mI` | The only disagreements are at (m_I, p) and (m_I, q) |
+| `right_image_same_dot1` | ∀ x ≠ m_I, dot1 x p = dot1 x q |
+| `cross_model_right_image` | ∀ x ≠ m_I, dot1 x p = dot1' x q |
+| `mI_is_unique_discriminator` | m_I is the only element that classifies p and q differently |
+| `no_universal_actuality_predicate` | No predicate matches actualM in Δ₁ and actualM' in Δ₁' |
+| `actuality_irreducibility` | Combined 7-conjunct theorem |
+
+The `cross_model_right_image` result is the sharp version: non-m_I elements cannot distinguish p from q at all as right arguments. The only element that "knows" which one is non-actual is m_I itself -- and m_I's behavior is the one thing that differs between the models. The only way to determine what's actual is to already have an actuality predicate. There is no structural back door.
+
+This connects directly to epistemology: given a complete structural description of a self-modeling system, the question "which elements are actual?" has multiple valid answers, and the structure alone does not select among them. You have to look. You have to encounter which model you're in. No amount of reasoning about the structure resolves it.
+
+---
+
+## Δ₂ -- Computational Extension (Interpreter)
 
 | Property | Value |
 |----------|-------|
@@ -90,52 +139,14 @@ All theorems are checked by `decide` or `native_decide`, which is appropriate an
 | Status | Python implementation, not Lean-formalized |
 | File | `python/delta2_interpreter.py` |
 
-Δ₂ is **not** a finite algebra. It is a Distinction Structure core embedded in an interpreter. QUOTE generates unbounded inert values; EVAL is defined recursively over syntax trees. This is the boundary between algebra and computation.
-
-## Key Results (with Lean theorem names)
-
-### Axiom Satisfaction
-
-| Axiom | Δ₀ theorem | Δ₁ theorem |
-|-------|-----------|-----------|
-| Ext (behavioral separability) | `Delta0.ext_Dι` | `Delta1.ext_D1ι` |
-| A7′ (structural novelty) | `Delta0.a7'` | `Delta1.a7'` |
-| H1 (Distinction homomorphism) | `Delta0.h1_iota`, `Delta0.h1_kappa` | `Delta1.h1_iota`, `Delta1.h1_kappa` |
-| H2 (Actuality homomorphism) | `Delta0.h2_iota`, `Delta0.h2_kappa` | `Delta1.h2_iota`, `Delta1.h2_kappa` |
-| H3 (Synthesis homomorphism) | `Delta0.h3` | `Delta1.h3` |
-
-### Recovery Lemmas (Δ₁ only)
-
-| Step | What is recovered | Lean theorem |
-|------|-------------------|-------------|
-| 1 | Booleans (⊤, ⊥) | `Discoverable.boolean_uniqueness` |
-| 2 | Testers (e_I, d_K, m_K, m_I) | `Discoverable.tester_characterization` |
-| 3 | Tester signatures (16, 2, 2, 1) | `Discoverable.tester_cardinality_*` |
-| 4 | Context tester vs domain tester | `Discoverable.rich_vs_inert` |
-| 5 | e_D vs e_M | `Discoverable.encoder_asymmetry` |
-| 6 | i vs k | `Discoverable.context_token_discrimination` |
-| 7 | p (non-actual element) | `Discoverable.junk_identification` |
-| 8 | e_Σ, s_C, e_Δ (unique triple) | `Discoverable.triple_identification` |
+Δ₂ is not a finite algebra. It is a Distinction Structure core embedded in an interpreter. QUOTE generates unbounded inert values; EVAL is defined recursively over syntax trees. This is the boundary between algebra and computation.
 
 ## What Is Not Proved
 
 - **Minimality.** We do not prove that 16 (resp. 17) is the minimum element count. The models are upper bound witnesses.
-- **Symmetric impossibility.** The symmetric synthesis barrier is demonstrated by construction (boolean contradiction, operator/operand conflict) but not proved as a general impossibility theorem.
-- **Categorical formalization.** The category-theoretic perspective (Contexts as maximal cliques, Actuality as sub-presheaf) is discussed in the document but not formalized in Lean.
+- **Symmetric impossibility.** The symmetric synthesis barrier is demonstrated by construction but not proved as a general impossibility theorem.
+- **Categorical formalization.** The category-theoretic perspective is discussed in the document but not formalized in Lean.
 - **Δ₂ properties.** The computational extension is implemented in Python but not mechanically verified.
-
-## Background Document
-
-The full mathematical and philosophical development is in [`docs/Distinction_Structures.md`](docs/Distinction_Structures.md). It covers:
-
-- The four concepts (Distinction, Context, Actuality, Synthesis) and their philosophical motivation
-- Set-theoretic and category-theoretic formalizations
-- Both existence proofs with complete operation tables
-- The symmetric synthesis barrier
-- The recovery procedure with all uniqueness arguments
-- Epistemological implications
-- Computational interpretation (path to programming language)
-- Status of all claims (proven / conjectured / retracted)
 
 ## Communication Protocol
 
@@ -143,12 +154,16 @@ The discoverability property has a direct application: a communication protocol 
 
 The protocol has four layers:
 
-- **Layer A** — The Cayley table (self-interpreting, medium-independent)
-- **Layer B** — Medium-reflexive grounding (anchors vocabulary in the transmission medium itself)
-- **Layer C** — Extended physics (new domains introduced via the encoder apparatus)
-- **Layer D** — Open communication (executable programs via Δ₂)
+- **Layer A** -- The Cayley table (self-interpreting, medium-independent)
+- **Layer B** -- Medium-reflexive grounding (anchors vocabulary in the transmission medium itself)
+- **Layer C** -- Extended physics (new domains introduced via the encoder apparatus)
+- **Layer D** -- Open communication (executable programs via Δ₂)
 
-The key innovation is that Layer B references the transmission medium — the one physical context sender and recipient provably share. See [`docs/COMMUNICATION.md`](docs/COMMUNICATION.md) for the full protocol design.
+The key innovation is that Layer B references the transmission medium -- the one physical context sender and recipient provably share. See [`COMMUNICATION.md`](COMMUNICATION.md) for the full protocol design.
+
+## Background Document
+
+The full mathematical and philosophical development is in [`docs/Distinction_Structures.md`](docs/Distinction_Structures.md). It covers the four concepts (Distinction, Context, Actuality, Synthesis), both existence proofs, the recovery procedure, the symmetric synthesis barrier, epistemological implications, and the path to computation.
 
 ## License
 
@@ -163,6 +178,6 @@ If you use this work, please cite:
   author = {Stefano Palmieri},
   title = {Distinction Structures: A Minimal Self-Modeling Framework},
   year = {2026},
-  note = {Lean 4 formalization, 0 sorry. Models Δ₀ (intrinsic reflexivity) and Δ₁ (discoverable reflexivity) machine-checked.}
+  note = {Lean 4 formalization, 0 sorry. Three machine-checked results: existence (Δ₀, Δ₁), discoverability (8 recovery lemmas), and actuality irreducibility.}
 }
 ```

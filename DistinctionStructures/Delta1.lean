@@ -250,7 +250,7 @@ instance : DecidablePred delta1_dirDS.actual := inferInstanceAs (DecidablePred a
 
 theorem delta1_dirDS_A2 : delta1_dirDS.A2 := ⟨.top, by decide⟩
 theorem delta1_dirDS_A5 : delta1_dirDS.A5 := ⟨.p, by decide⟩
-theorem delta1_dirDS_Ext : delta1_dirDS.Ext := by decide
+theorem delta1_dirDS_Ext : delta1_dirDS.Ext := delta1_ext_ι
 
 /-- A7′ (Structural Novelty) for the directed case as a unified proposition.
     Witness: S = {e_I, e_D, e_M, e_Sigma}, δ* = e_Delta, t = e_D.

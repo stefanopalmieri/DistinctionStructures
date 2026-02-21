@@ -2,3 +2,4 @@ import DistinctionStructures.Basic
 import DistinctionStructures.Delta1
 import DistinctionStructures.Discoverable
 import DistinctionStructures.Delta0
+import DistinctionStructures.ActualityIrreducibility
