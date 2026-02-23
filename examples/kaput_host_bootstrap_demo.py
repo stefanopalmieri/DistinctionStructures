@@ -173,13 +173,14 @@ D1_CANONICAL_ORDER = [
     "p",
 ]
 
-WIZARD_TEMPLATE = [
+# Keep plain mode on the original mascot geometry so table colors map
+# exactly as they did before TUI-specific template experiments.
+PLAIN_WIZARD_TEMPLATE = [
     "     ****",
     "     **  *",
     "    ***",
     "    ****",
     "   *******",
-    "    ****",
     "    ****",
     "    *****",
     "   ** * **",
@@ -211,6 +212,8 @@ WIZARD_TEMPLATE = [
     "",
     "",
 ]
+
+WIZARD_TEMPLATE = PLAIN_WIZARD_TEMPLATE
 
 CUSTOM_TEMPLATE_ORDER = [
     "⊤",
@@ -604,7 +607,7 @@ def host_main(conn, seed: int = 17, prefix: str = "h") -> None:
         blank_token: str | None,
     ) -> None:
         print(f"[host] {label} color table (seed={state['seed']}, fp={fingerprint})")
-        template_cells = sum(row.count("*") for row in WIZARD_TEMPLATE)
+        template_cells = sum(row.count("*") for row in PLAIN_WIZARD_TEMPLATE)
         matrix_h = len(matrix)
         matrix_w = len(matrix[0]) if matrix_h else 0
         if matrix_h == 0 or matrix_w == 0:
@@ -633,7 +636,7 @@ def host_main(conn, seed: int = 17, prefix: str = "h") -> None:
         print(f"[host] mascot source nonblank cells={len(nonblank_vals)}")
 
         star_idx = 0
-        for tr, row in enumerate(WIZARD_TEMPLATE):
+        for tr, row in enumerate(PLAIN_WIZARD_TEMPLATE):
             parts = []
             for tc, ch in enumerate(row):
                 if ch == "*":
