@@ -58,6 +58,14 @@ DistinctionStructures/
 ├── delta2_74181.py                              # 74181+IO verification suite (47 atoms)
 ├── delta2_74181_blackbox.py                     # 74181+IO true black-box recovery demo
 ├── ds_repl.py                                   # Interactive REPL with all 47 atoms
+├── emulator/
+│   ├── __init__.py
+│   ├── chips.py                                 # Hardware primitives (EEPROM, IC74181, SRAM, Register, FIFO)
+│   ├── cayley.py                                # Cayley ROM builder (47×47 byte array)
+│   ├── machine.py                               # Clocked eval/apply state machine
+│   ├── host.py                                  # High-level interface (term loading, decoding)
+│   ├── recovery.py                              # Black-box recovery via the machine's dispatch unit
+│   └── test_machine.py                          # Verification suite (2209 atom pairs, 768 ALU ops)
 ├── examples/
 │   ├── io_demo.ds                               # IO atoms demo (prints "Hi!")
 │   └── alu_74181_demo.ds                        # ALU operations demo
@@ -201,6 +209,37 @@ The 74181 extension adds 26 atoms to Δ₂'s 21, for a total of 47. The design m
 | Phase 2 | Term-level probing | 8 opaque atoms (D2 + IO) | QUOTE/EVAL pair, partial group structure, AppNode destructure |
 
 Phase 1 identifies 39 atoms from the 47×47 Cayley table alone. The remaining 8 have identical all-p Cayley rows and require term-level probing (applying atoms to structured values, not just other atoms). Phase 2's 4-step algorithm resolves all 8: QUOTE/EVAL via roundtrip, APP/IO_PUT/IO_SEQ via partial application signatures, IO_RDY via ⊤-response, UNAPP via AppNode destructure, IO_GET by exclusion.
+
+### Emulator: Kameas Machine
+
+A cycle-accurate emulator of the hardware architecture: Cayley ROM, IC74181 ALU, SRAM heap, hardware stack, UART FIFOs, and a microcode-driven eval/apply state machine. One dispatch unit handles all term-level operations — both normal evaluation and black-box recovery use the same code path.
+
+**Architecture:**
+
+| Component | Model | Role |
+|-----------|-------|------|
+| Cayley ROM | EEPROM (12-bit addr, 6-bit data) | 47×47 atom-level dot lookup |
+| ALU | IC74181 (pin-accurate) | 32 operations via 3 mode atoms × 16 selectors |
+| Heap | SRAM (4096 × 28-bit words) | Term storage (tag + left + right) |
+| Stack | SRAM (256 × 28-bit words) | Eval/apply continuation stack |
+| UART | 16-byte TX/RX FIFOs | Byte-level IO |
+
+**Word format:** 28 bits — 4-bit tag, 12-bit left, 12-bit right. 10 tag types: Atom, Quoted, App, ALUPartial1/2, IOPutPartial, IOSeqPartial, Bundle, Partial, CoutProbe.
+
+**State machine:** FETCH → DECODE → EVAL_R → APPLY → dispatch → RETURN. The dispatch unit routes based on tag and atom index, handles Cayley ROM lookup, ALU firing, partial application building, IO operations, and quote/eval/app/unapp.
+
+**Recovery via dispatch unit:** `emulator/recovery.py` runs the full 3-phase discovery procedure through the machine's dispatch unit with a scrambled Cayley ROM. The oracle is a thin label↔word translation layer — all computation goes through the same `_dispatch_apply` that normal evaluation uses. 100 seeds, 47/47 atoms, avg ~13k cycles and ~5k ROM reads per seed.
+
+```bash
+# Run emulator tests (2209 atom pairs + ALU + IO)
+uv run python -m emulator.test_machine
+
+# Run black-box recovery through the emulator (100 seeds)
+uv run python -m emulator.recovery --seeds 100
+
+# Run emulator CLI demo
+uv run python -m emulator.host
+```
 
 **Usage (REPL):**
 
