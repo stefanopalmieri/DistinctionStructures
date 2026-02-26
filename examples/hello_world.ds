@@ -1,54 +1,21 @@
 ; hello_world.ds
-; DS-native char/string encoding demo with REPL sugar.
-; Run with: uv run ds_repl.py examples/hello_world.ds
+; Prints "Hello, world!\n" via UART using only emulator atoms.
+; Run with: uv run python -m emulator.debugger examples/hello_world.ds
+;
+; Each character is written as (IO_PUT hi_nibble) lo_nibble.
+; IO_SEQ chains writes: (IO_SEQ first) second → evaluate first, then second.
 
-; Bits are contextual (:binary)
-(def one (bit :top))
-(def zero (bit :bot))
-(def one-h (bit 0x1))
-(print one (unbit one) zero (unbit zero) one-h (unbit one-h))
-(print (bit? one) (byte? one) (char? one))
-
-; Bytes are 8 contextual bits (MSB -> LSB)
-(def byteA (byte 0x4 0x1))
-(print byteA)
-
-; Chars are (context, byte) pairs
-(def charA (char :ansi byteA))
-(print charA (char-ctx charA) (char-byte charA))
-(print (char 0x41) (char 0xFF))
-
-; Macro expansion of convenience forms into core DS forms
-(print (expand (char-byte (char 0x41))))
-(print (expand (string 0x48 0x69)))
-(print (expand (byte :bot :top :bot :bot :bot :bot :bot :top)))
-
-; Invalid byte domain inputs return structured errors, not Python exceptions
-(def bad-byte (byte :bot :top :bot :bot :bot :bot :bot :top))
-(print bad-byte (err? bad-byte) (err-code bad-byte))
-
-; Literal string sugar => DS-native list of ANSI char nodes
-(print "Hello, world!")
-
-; Char constructor from byte
-(def bang-byte (byte 0x2 0x1))
-(def bang (char bang-byte))
-(print bang (char-byte bang))
-
-; Build a string from chars and 1-char string sugar
-(def hi (string "H" "i"))
-(print hi)
-
-; Decompose first character with existing UNAPP/top/bot machinery
-(def greeting "Hello, world!")
-(def pair (unapp greeting))
-(def first-char (pair :top))
-(def rest (pair :bot))
-(print first-char (char-byte first-char))
-(print rest)
-
-; Quoted DS-native literals now survive eval
-(print (eval (quote "Hello, world!")))
-
-; Keep one real DS computation as sanity check
-(eval '(:m_I (:e_I :i)))
+((:IO_SEQ ((:IO_PUT :N4) :N8))   ; H
+((:IO_SEQ ((:IO_PUT :N6) :N5))   ; e
+((:IO_SEQ ((:IO_PUT :N6) :NC))   ; l
+((:IO_SEQ ((:IO_PUT :N6) :NC))   ; l
+((:IO_SEQ ((:IO_PUT :N6) :NF))   ; o
+((:IO_SEQ ((:IO_PUT :N2) :NC))   ; ,
+((:IO_SEQ ((:IO_PUT :N2) :N0))   ; (space)
+((:IO_SEQ ((:IO_PUT :N7) :N7))   ; w
+((:IO_SEQ ((:IO_PUT :N6) :NF))   ; o
+((:IO_SEQ ((:IO_PUT :N7) :N2))   ; r
+((:IO_SEQ ((:IO_PUT :N6) :NC))   ; l
+((:IO_SEQ ((:IO_PUT :N6) :N4))   ; d
+((:IO_SEQ ((:IO_PUT :N2) :N1))   ; !
+((:IO_PUT :N0) :NA))))))))))))))  ; \n
