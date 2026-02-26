@@ -158,6 +158,18 @@ class ALUCoutProbe:
     a: int
     def __repr__(self): return f"#cout[{self.mode} N{self.selector:X} N{self.a:X}]"
 
+@dataclass(frozen=True)
+class IOPutPartial:
+    """IO_PUT with high nibble applied, awaiting low nibble."""
+    hi: int  # high nibble 0-15
+    def __repr__(self): return f"#io-put[:N{self.hi:X}]"
+
+@dataclass(frozen=True)
+class IOSeqPartial:
+    """IO_SEQ with first action result applied, awaiting second."""
+    first: Any
+    def __repr__(self): return f"#io-seq[...]"
+
 class List:
     def __init__(self, items):
         self.items = items
@@ -216,12 +228,14 @@ NIBBLE_NAMES = [f"N{i:X}" for i in range(16)]
 ALU_DISPATCH_NAMES = ["ALU_LOGIC", "ALU_ARITH", "ALU_ARITHC"]
 ALU_PRED_NAMES = ["ALU_ZERO", "ALU_COUT"]
 ALU_MISC_NAMES = ["N_SUCC"]
+IO_NAMES = ["IO_PUT", "IO_GET", "IO_RDY", "IO_SEQ"]
 
-ATOMS = ATOMS_D1 + NIBBLE_NAMES + ALU_DISPATCH_NAMES + ALU_PRED_NAMES + ALU_MISC_NAMES
+ATOMS = ATOMS_D1 + NIBBLE_NAMES + ALU_DISPATCH_NAMES + ALU_PRED_NAMES + ALU_MISC_NAMES + IO_NAMES
 ATOM_SET = set(ATOMS)
 NIBBLE_SET = set(NIBBLE_NAMES)
 ALU_DISPATCH_SET = set(ALU_DISPATCH_NAMES)
 ALU_PRED_SET = set(ALU_PRED_NAMES)
+IO_SET = set(IO_NAMES)
 
 
 def is_nibble_name(name: str) -> bool:
@@ -464,7 +478,7 @@ def dot_d1(x: str, y: str) -> str:
 
 
 def dot_atom(x: str, y: str) -> str:
-    """Full 43-atom Cayley table (Δ₁ + 74181 extension)."""
+    """Full 47-atom Cayley table (Δ₁ + 74181 extension + IO)."""
     # D1 atoms use the original table (works for D1 × anything since
     # D1 testers return bot for non-D1 atoms except m_I which returns top)
     if x in ATOMS_D1:
@@ -576,6 +590,46 @@ def ds_apply(left: Any, right: Any, fuel: int = MAX_FUEL) -> Any:
             return Keyword(nibble_name(result))
         return Keyword("p")
 
+    # IO_PUT + nibble → IOPutPartial(nibble_val)
+    if isinstance(left, Keyword) and left.name == "IO_PUT":
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            return IOPutPartial(nibble_val(right.name))
+
+    # IOPutPartial + nibble → write byte to stdout, return ⊤
+    if isinstance(left, IOPutPartial):
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            byte_val = (left.hi << 4) | nibble_val(right.name)
+            import sys
+            sys.stdout.write(chr(byte_val))
+            sys.stdout.flush()
+            return Keyword("top")
+        return Keyword("p")
+
+    # IO_GET + ⊤ → read one byte from stdin, return AppNode(hi_nibble, lo_nibble)
+    if isinstance(left, Keyword) and left.name == "IO_GET":
+        if isinstance(right, Keyword) and right.name == "top":
+            import sys
+            ch = sys.stdin.read(1)
+            if ch:
+                code = ord(ch)
+                hi = (code >> 4) & 0xF
+                lo = code & 0xF
+                return AppNode(Keyword(nibble_name(hi)), Keyword(nibble_name(lo)))
+            return Keyword("p")
+
+    # IO_RDY + ⊤ → return ⊤
+    if isinstance(left, Keyword) and left.name == "IO_RDY":
+        if isinstance(right, Keyword) and right.name == "top":
+            return Keyword("top")
+
+    # IO_SEQ + any → IOSeqPartial(value)
+    if isinstance(left, Keyword) and left.name == "IO_SEQ":
+        return IOSeqPartial(right)
+
+    # IOSeqPartial + any → return right (discard first, effects already fired)
+    if isinstance(left, IOSeqPartial):
+        return right
+
     # ALU_COUT modal: on ALUPartial2, becomes carry probe awaiting B
     if isinstance(left, Keyword) and left.name == "ALU_COUT":
         if isinstance(right, ALUPartial2):
@@ -591,7 +645,8 @@ def ds_apply(left: Any, right: Any, fuel: int = MAX_FUEL) -> Any:
     # Inertness: structured values under atoms
     if isinstance(left, Keyword) and left.name in ATOM_SET:
         if isinstance(right, (Quoted, Literal, AppNode, Bundle, Partial,
-                              ALUPartial1, ALUPartial2, ALUCoutProbe)):
+                              ALUPartial1, ALUPartial2, ALUCoutProbe,
+                              IOPutPartial, IOSeqPartial)):
             return Keyword("p")
 
     # Atom × Atom fallback (full 43-atom Cayley table)
@@ -932,7 +987,7 @@ def repl_eval(expr: Any) -> Any:
         if expr.name in ATOM_SET:
             return Keyword(expr.name)
         # Check special atoms
-        if expr.name in ("QUOTE", "EVAL", "APP", "UNAPP"):
+        if expr.name in ("QUOTE", "EVAL", "APP", "UNAPP") or expr.name in IO_SET:
             return Keyword(expr.name)
         raise NameError(f"Unbound symbol: {expr.name}")
 
@@ -1148,7 +1203,7 @@ def quote_transform(expr: Any) -> Any:
     if isinstance(expr, HexByte):
         return Literal(expr)
     if isinstance(expr, Symbol):
-        if expr.name in ATOM_SET or expr.name in ("QUOTE", "EVAL", "APP", "UNAPP"):
+        if expr.name in ATOM_SET or expr.name in ("QUOTE", "EVAL", "APP", "UNAPP") or expr.name in IO_SET:
             return Keyword(expr.name)
         if expr.name in ENV:
             return ENV[expr.name]
@@ -1352,6 +1407,10 @@ def format_val(v: Any) -> str:
         return f"#alu2[{v.mode} :N{v.selector:X} :N{v.a:X}]"
     if isinstance(v, ALUCoutProbe):
         return f"#cout[{v.mode} :N{v.selector:X} :N{v.a:X}]"
+    if isinstance(v, IOPutPartial):
+        return f"#io-put[:N{v.hi:X}]"
+    if isinstance(v, IOSeqPartial):
+        return f"#io-seq[{format_val(v.first)}]"
     if isinstance(v, List):
         return "(" + " ".join(format_val(i) for i in v.items) + ")"
     if isinstance(v, Symbol):
@@ -1366,7 +1425,7 @@ def format_val(v: Any) -> str:
 def repl():
     """Interactive REPL."""
     print("Distinction Structures REPL")
-    print("  43 atoms: 17 Δ₁ + 4 Δ₂ + 16 nibbles + 3 ALU dispatch + 2 ALU pred + N_SUCC")
+    print("  47 atoms: 17 Δ₁ + 4 Δ₂ + 16 nibbles + 3 ALU dispatch + 2 ALU pred + N_SUCC + 4 IO")
     print('  DS-native text: bit -> byte -> char -> string ("hello")')
     print("  Type (discover!) to run self-discovery")
     print("  Type (table) to see the Cayley table")

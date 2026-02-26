@@ -2,17 +2,18 @@
 """
 Δ₂+74181 Discoverability Demo — True Black-Box Recovery
 
-Extends the 21-atom Δ₂ algebra with 22 new atoms for a 74181 ALU extension:
+Extends the 21-atom Δ₂ algebra with 26 new atoms for a 74181 ALU + IO extension:
   - 16 nibble atoms N0–NF (4-bit data values / operation selectors)
   - 3 ALU dispatch atoms (ALU_LOGIC, ALU_ARITH, ALU_ARITHC)
   - 2 predicate atoms (ALU_ZERO, ALU_COUT)
   - 1 nibble successor atom (N_SUCC)
+  - 4 IO atoms (IO_PUT, IO_GET, IO_RDY, IO_SEQ) with all-p Cayley rows
 
-Total: 43 atoms. All atoms are uniquely recoverable from black-box
-access to the dot operation alone. Recovery proceeds in three phases:
-  Phase 1: Recover all 17 Δ₁ atoms from behavior
-  Phase 2: Recover QUOTE, EVAL, APP, UNAPP from behavior
-  Phase 3: Recover all 22 new 74181 atoms from behavior
+Total: 47 atoms. All 47 are uniquely recoverable from black-box access
+to the dot operation alone. Recovery proceeds in two phases:
+  Phase 1a: Recover all 17 Δ₁ atoms from Cayley-level probing
+  Phase 1b: Recover 22 extension atoms (nibbles, ALU, N_SUCC) from Cayley-level
+  Phase 2:  Recover 8 opaque atoms (D2 + IO) via term-level probing
 
 The 74181 chip's 32 operations are encoded as 3 dispatch atoms × 16
 nibble selectors, invoked via curried application:
@@ -71,6 +72,16 @@ class ALUPartial2:
     selector: int
     a: int          # 0-15
 
+@dataclass(frozen=True)
+class IOPutPartial:
+    """IO_PUT with high nibble applied, awaiting low nibble."""
+    hi: int  # high nibble 0-15
+
+@dataclass(frozen=True)
+class IOSeqPartial:
+    """IO_SEQ with first action result applied, awaiting second."""
+    first: Any
+
 
 def A(n: str) -> Atom:
     return Atom(n)
@@ -90,14 +101,16 @@ NAMES_NIBBLES = [f"N{i:X}" for i in range(16)]
 NAMES_ALU_DISPATCH = ["ALU_LOGIC", "ALU_ARITH", "ALU_ARITHC"]
 NAMES_ALU_PRED = ["ALU_ZERO", "ALU_COUT"]
 NAMES_ALU_MISC = ["N_SUCC"]
+NAMES_IO = ["IO_PUT", "IO_GET", "IO_RDY", "IO_SEQ"]
 
 ALL_NAMES = (NAMES_D1 + NAMES_D2 + NAMES_NIBBLES +
-             NAMES_ALU_DISPATCH + NAMES_ALU_PRED + NAMES_ALU_MISC)
+             NAMES_ALU_DISPATCH + NAMES_ALU_PRED + NAMES_ALU_MISC + NAMES_IO)
 ALL_ATOMS = [A(n) for n in ALL_NAMES]
 
 NIBBLE_ATOMS = frozenset(A(f"N{i:X}") for i in range(16))
 ALU_DISPATCH_ATOMS = frozenset(A(n) for n in NAMES_ALU_DISPATCH)
 ALU_PRED_ATOMS = frozenset(A(n) for n in NAMES_ALU_PRED)
+IO_ATOMS = frozenset(A(n) for n in NAMES_IO)
 D1_ATOMS = frozenset(A(n) for n in NAMES_D1)
 D2_EXT_ATOMS = frozenset(A(n) for n in NAMES_D2)
 
@@ -233,11 +246,11 @@ def dot_iota_d1(x: Atom, y: Atom) -> Atom:
 
 
 # ============================================================================
-# Atom-atom Cayley table (43 × 43)
+# Atom-atom Cayley table (47 × 47)
 # ============================================================================
 
 def atom_dot(x: Atom, y: Atom) -> Atom:
-    """Cayley table for all 43 atoms.
+    """Cayley table for all 47 atoms.
 
     Design principles:
     - Preserves all 21×21 original D1/D2 entries exactly
@@ -246,6 +259,7 @@ def atom_dot(x: Atom, y: Atom) -> Atom:
     - ALU dispatch: identity/successor/double-successor on nibbles
     - ALU predicates: tester-like on nibbles, self-id on ⊤
     - N_SUCC: successor on nibbles, reset on ⊥
+    - IO atoms: all-p rows (effects happen at term level)
     """
     TOP, BOT = A("⊤"), A("⊥")
 
@@ -255,6 +269,10 @@ def atom_dot(x: Atom, y: Atom) -> Atom:
 
     # ── D2 atoms × anything: atom-level fallback is p ──
     if x in D2_EXT_ATOMS:
+        return A("p")
+
+    # ── IO atoms × anything: all-p (effects happen at term level) ──
+    if x in IO_ATOMS:
         return A("p")
 
     # ── Nibble self-identification on ⊤ ──
@@ -369,6 +387,34 @@ def dot_iota(x: Any, y: Any) -> Any:
     if x == A("ALU_COUT") and isinstance(y, Atom) and is_nibble(y):
         return A("⊤") if nibble_val(y) >= 8 else A("⊥")
 
+    # --- IO_PUT + nibble → IOPutPartial ---
+    if x == A("IO_PUT") and isinstance(y, Atom) and is_nibble(y):
+        return IOPutPartial(nibble_val(y))
+
+    # --- IOPutPartial + nibble → ⊤ (pure: no actual stdout write) ---
+    if isinstance(x, IOPutPartial):
+        if isinstance(y, Atom) and is_nibble(y):
+            return A("⊤")
+        return A("p")
+
+    # --- IO_GET + ⊤ → p (pure: no actual stdin read) ---
+    if x == A("IO_GET"):
+        if y == A("⊤"):
+            return A("p")
+
+    # --- IO_RDY + ⊤ → ⊤ ---
+    if x == A("IO_RDY"):
+        if y == A("⊤"):
+            return A("⊤")
+
+    # --- IO_SEQ + any → IOSeqPartial ---
+    if x == A("IO_SEQ"):
+        return IOSeqPartial(y)
+
+    # --- IOSeqPartial + any → return right (effects already fired) ---
+    if isinstance(x, IOSeqPartial):
+        return y
+
     # --- Atoms acting on non-atom structured terms → p ---
     if isinstance(x, Atom) and not isinstance(y, Atom):
         return A("p")
@@ -461,24 +507,26 @@ def discover_d1(domain: List[str], dot) -> Dict[str, Any]:
     assert chosen is not None, "Failed to orient booleans"
     top, bot, testers, Dec = chosen
 
-    # ── Step 2.5: Find p ──
-    # p is the UNIQUE non-boolean, non-tester element where dot(x, ⊤) = ⊤.
-    p_candidates = [
-        x for x in domain
-        if x not in (top, bot) and x not in testers
-        and dot(x, top) == top
-    ]
-    assert len(p_candidates) == 1, (
-        f"Expected exactly 1 p-candidate, got {len(p_candidates)}"
-    )
-    p_tok = p_candidates[0]
-
-    # ── Step 3: Identify testers by cardinality ──
+    # ── Step 3: Identify testers by cardinality (moved before p-detection) ──
     sizes = {t: len(Dec(t)) for t in testers}
     m_K = [t for t in testers if sizes[t] == 1][0]
     m_I = max(testers, key=lambda t: sizes[t])
     two = [t for t in testers if sizes[t] == 2]
     assert len(two) == 2
+
+    # ── Step 2.5: Find p ──
+    # p is the unique non-boolean, non-tester element where dot(x, ⊤) = ⊤
+    # AND dot(m_I, x) = ⊥ (m_I maps only p to ⊥; all others to ⊤).
+    p_candidates = [
+        x for x in domain
+        if x not in (top, bot) and x not in testers
+        and dot(x, top) == top
+        and dot(m_I, x) == bot
+    ]
+    assert len(p_candidates) == 1, (
+        f"Expected exactly 1 p-candidate, got {len(p_candidates)}"
+    )
+    p_tok = p_candidates[0]
 
     # ── Step 4: Distinguish e_I from d_K ──
     def has_productive_args(decoded_set):
@@ -621,20 +669,16 @@ def discover_d2(domain: List[str], dot, d1: Dict[str, Any]) -> Dict[str, Any]:
 # Phase 3: Discover 74181 extension atoms — TRUE BLACK-BOX
 # ============================================================================
 
-def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
-                   d2: Dict[str, Any], verbose: bool = False) -> Dict[str, Any]:
+def discover_74181_with_logs(domain: List[str], dot, d1: Dict[str, Any],
+                             verbose: bool = False) -> Tuple[Dict[str, Any], List[str]]:
     """
-    Recover all 22 new atoms (16 nibbles + 3 ALU dispatch + 2 predicates
-    + 1 N_SUCC) from behavioral probing.
+    Phase 1b: Recover 22 new atoms from Cayley-level probing and separate
+    8 opaque (all-p) atoms for Phase 2 term-level recovery.
 
-    Recovery order:
-      1. Identify predicates (atoms producing both ⊤ and ⊥ in left-image)
-      2. Separate nibbles from non-nibbles (self-composable vs not)
-      3. Identify N_SUCC (unique cyclic permuter of nibble group)
-      4. Distinguish ALU_ZERO from ALU_COUT by decoded set size
-      5. Find N0 via ALU_ZERO (unique nibble mapped to ⊤)
-      6. Walk N_SUCC cycle from N0 to order all 16 nibbles
-      7. Distinguish ALU_LOGIC / ALU_ARITH / ALU_ARITHC via curried probe
+    Returns:
+        (ext_dict, opaque_list): ext_dict maps atom names to hidden labels
+        for the 22 identifiable atoms; opaque_list contains the 8 hidden
+        labels with identical all-p Cayley rows (D2 + IO atoms).
     """
     top = d1["⊤"]
     bot = d1["⊥"]
@@ -642,20 +686,20 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
 
     def log(msg):
         if verbose:
-            print(f"    [74181] {msg}")
+            print(f"    [Phase 1b] {msg}")
 
     d1_identified = {v for k, v in d1.items() if k != "_testers"}
-    d2_identified = set(d2.values())
-    known = d1_identified | d2_identified
-    remaining = [x for x in domain if x not in known]
-    assert len(remaining) == 22, f"Expected 22 remaining atoms, got {len(remaining)}"
+    remaining = [x for x in domain if x not in d1_identified]
+    assert len(remaining) == 30, f"Expected 30 remaining atoms, got {len(remaining)}"
     log(f"Starting with {len(remaining)} unidentified atoms")
 
-    # ── Step 1: Identify predicate atoms ──
-    # Predicates produce ⊤ AND ⊥ AND self in their left-image
-    def left_image(x):
-        return {dot(x, y) for y in domain}
+    # ── Step 0: Compute domain-restricted left images ─────────────────
+    domain_set = set(domain)
 
+    def left_image(x):
+        return {r for r in [dot(x, y) for y in domain] if isinstance(r, str) and r in domain_set}
+
+    # ── Step 1: Identify predicate atoms ──────────────────────────────
     predicates = []
     for x in remaining:
         li = left_image(x)
@@ -665,40 +709,37 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
     assert len(predicates) == 2, f"Expected 2 predicates, got {len(predicates)}"
     log(f"Predicates identified: {predicates}")
 
-    # ── Step 2: Separate nibbles from non-nibbles ──
+    # ── Step 2: Separate nibbles from non-nibbles ─────────────────────
     non_pred = [x for x in remaining if x not in predicates]
-    assert len(non_pred) == 20
-
+    non_pred_set = set(non_pred)
     nibbles = []
     non_nibbles = []
     for x in non_pred:
         xx = dot(x, x)
-        if xx in non_pred and xx != p_tok:
+        if isinstance(xx, str) and xx in non_pred_set and xx != p_tok:
             nibbles.append(x)
         else:
             non_nibbles.append(x)
 
     assert len(nibbles) == 16, f"Expected 16 nibbles, got {len(nibbles)}"
-    assert len(non_nibbles) == 4, f"Expected 4 non-nibbles, got {len(non_nibbles)}"
     log(f"Nibbles: {len(nibbles)}, Non-nibbles: {len(non_nibbles)}")
 
-    # ── Step 3: Identify N_SUCC ──
-    # N_SUCC maps nibbles to domain nibbles bijectively.
-    # ALU dispatch atoms produce non-domain ALUPartial1 values.
+    # ── Step 3: Identify N_SUCC ───────────────────────────────────────
+    nibble_set = set(nibbles)
     n_succ_tok = None
-    dispatch = []
+    non_nibble_rest = []
     for x in non_nibbles:
         images = [dot(x, n) for n in nibbles]
-        if all(img in nibbles for img in images) and len(set(images)) == 16:
+        maps_all_to_nibbles = all(isinstance(img, str) and img in nibble_set for img in images)
+        if maps_all_to_nibbles and len(set(images)) == 16:
             n_succ_tok = x
         else:
-            dispatch.append(x)
+            non_nibble_rest.append(x)
 
     assert n_succ_tok is not None, "Failed to identify N_SUCC"
-    assert len(dispatch) == 3, f"Expected 3 ALU dispatch, got {len(dispatch)}"
     log(f"N_SUCC identified: {n_succ_tok}")
 
-    # ── Step 4: Distinguish ALU_ZERO from ALU_COUT ──
+    # ── Step 4: Distinguish ALU_ZERO from ALU_COUT ────────────────────
     pred_a, pred_b = predicates
     dec_a = sum(1 for n in nibbles if dot(pred_a, n) == top)
     dec_b = sum(1 for n in nibbles if dot(pred_b, n) == top)
@@ -710,13 +751,13 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
     log(f"ALU_ZERO identified: {alu_zero_tok} (accepts {min(dec_a, dec_b)} nibbles)")
     log(f"ALU_COUT identified: {alu_cout_tok} (accepts {max(dec_a, dec_b)} nibbles)")
 
-    # ── Step 5: Find N0 (anchor via ALU_ZERO) ──
+    # ── Step 5: Find N0 (anchor via ALU_ZERO) ─────────────────────────
     n0_candidates = [n for n in nibbles if dot(alu_zero_tok, n) == top]
     assert len(n0_candidates) == 1, f"Expected 1 N0, got {len(n0_candidates)}"
     n0_tok = n0_candidates[0]
     log(f"N0 identified: {n0_tok}")
 
-    # ── Step 6: Order all 16 nibbles by walking N_SUCC from N0 ──
+    # ── Step 6: Order all 16 nibbles by walking N_SUCC from N0 ────────
     nibble_order = [n0_tok]
     current = n0_tok
     for _ in range(15):
@@ -725,11 +766,21 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
     assert len(set(nibble_order)) == 16, "Nibble ordering failed"
     log(f"Nibble order: N0={nibble_order[0]}, N1={nibble_order[1]}, ..., NF={nibble_order[15]}")
 
-    # ── Step 7: Identify ALU_LOGIC / ALU_ARITH / ALU_ARITHC ──
-    # Curried probe: dot(dot(dot(d, N0), N5), N0) gives different results:
-    #   ALU_LOGIC (S=0): NOT(5) = 10 = NA
-    #   ALU_ARITH (S=0): A = 5 = N5
-    #   ALU_ARITHC (S=0): A+1 = 6 = N6
+    # ── Step 7: Separate dispatch from opaque, then identify dispatch ─
+    # Dispatch atoms self-identify on ⊤: dot(x, ⊤) == x.
+    # D2/IO atoms produce structured values or p when applied to ⊤.
+    dispatch = []
+    opaque = []
+    for x in non_nibble_rest:
+        if dot(x, top) == x:
+            dispatch.append(x)
+        else:
+            opaque.append(x)
+
+    assert len(dispatch) == 3, f"Expected 3 dispatch, got {len(dispatch)}"
+    assert len(opaque) == 8, f"Expected 8 opaque (D2+IO) atoms, got {len(opaque)}"
+
+    # Identify ALU_LOGIC / ALU_ARITH / ALU_ARITHC via curried probe
     n0 = nibble_order[0]
     n5 = nibble_order[5]
     na = nibble_order[10]
@@ -754,6 +805,7 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
     log(f"ALU_LOGIC identified: {alu_logic_tok}")
     log(f"ALU_ARITH identified: {alu_arith_tok}")
     log(f"ALU_ARITHC identified: {alu_arithc_tok}")
+    log(f"Opaque (D2+IO) atoms: {len(opaque)} — deferred to Phase 2")
 
     result = {}
     for i in range(16):
@@ -765,7 +817,163 @@ def discover_74181(domain: List[str], dot, d1: Dict[str, Any],
     result["ALU_ZERO"] = alu_zero_tok
     result["ALU_COUT"] = alu_cout_tok
 
-    return result
+    log(f"Phase 1b complete: {len(result)} atoms identified, {len(opaque)} opaque remain")
+    return result, opaque
+
+
+# ============================================================================
+# Phase 2: Term-level recovery of 8 opaque atoms (D2 + IO)
+# ============================================================================
+
+def discover_phase2(opaque: List[str], dot, d1: Dict[str, Any],
+                    ext: Dict[str, Any], verbose: bool = False) -> Dict[str, Any]:
+    """
+    Phase 2: Identify all 8 opaque atoms via term-level probing.
+
+    These 8 atoms have identical all-p Cayley rows and are indistinguishable
+    at the atom-atom level. Term-level application reveals their identities:
+
+      Step 1: Apply each to N0 → identifies QUOTE (produces Quote),
+              EVAL (returns atom unchanged), and partitions the rest
+              into partial group (APP, IO_PUT, IO_SEQ) and p group
+              (UNAPP, IO_GET, IO_RDY).
+      Step 2: Resolve partial group via partial(N0)(N1).
+      Step 3: Resolve p group via application to ⊤.
+      Step 4: Confirm UNAPP via AppNode destructure; IO_GET by exclusion.
+    """
+    assert len(opaque) == 8, f"Expected 8 opaque atoms, got {len(opaque)}"
+
+    top = d1["⊤"]
+    bot = d1["⊥"]
+    p_tok = d1["p"]
+    n0 = ext["N0"]
+    n1 = ext["N1"]
+
+    def log(msg):
+        if verbose:
+            print(f"    [Phase 2] {msg}")
+
+    log(f"Starting with {len(opaque)} opaque atoms")
+
+    all_known = set()
+    for k, v in d1.items():
+        if k != "_testers":
+            all_known.add(v)
+    for v in ext.values():
+        all_known.add(v)
+    domain_set = all_known | set(opaque)
+
+    # ── Step 1: Apply each opaque atom to N0 ──────────────────────────
+    QUOTE_tok = EVAL_tok = None
+    partial_group = []
+    p_group = []
+
+    for x in opaque:
+        result = dot(x, n0)
+
+        if result == p_tok:
+            p_group.append(x)
+        elif isinstance(result, str) and result in domain_set:
+            p_group.append(x)
+        else:
+            partial_group.append(x)
+
+    log(f"Step 1: applied to N0 → partial group = {partial_group}, p group = {p_group}")
+
+    # partial_group = {QUOTE, APP, IO_PUT, IO_SEQ} (produce structured values)
+    # p_group = {EVAL, UNAPP, IO_GET, IO_RDY} (return p)
+    assert len(partial_group) == 4, f"Expected 4 in partial group, got {len(partial_group)}"
+    assert len(p_group) == 4, f"Expected 4 in p group, got {len(p_group)}"
+
+    # ── Step 1b: Identify QUOTE from partial group ────────────────────
+    for q in list(partial_group):
+        q_n0 = dot(q, n0)
+        for e in list(p_group):
+            if dot(e, q_n0) == n0:
+                QUOTE_tok = q
+                EVAL_tok = e
+                break
+        if QUOTE_tok:
+            break
+
+    assert QUOTE_tok is not None, "Failed to identify QUOTE/EVAL"
+    partial_group.remove(QUOTE_tok)
+    p_group.remove(EVAL_tok)
+    log(f"Step 1: QUOTE identified ({QUOTE_tok})")
+    log(f"Step 1: EVAL identified ({EVAL_tok})")
+
+    # ── Step 2: Resolve partial group (APP, IO_PUT, IO_SEQ) ──────────
+    APP_tok = IO_PUT_tok = IO_SEQ_tok = None
+
+    for x in partial_group:
+        partial_val = dot(x, n0)
+        result = dot(partial_val, n1)
+
+        if result == top:
+            IO_PUT_tok = x
+            log(f"Step 2: partial({x})(N0)(N1) = ⊤ → IO_PUT identified ({x})")
+        elif result == n1:
+            IO_SEQ_tok = x
+            log(f"Step 2: partial({x})(N0)(N1) returned N1 → IO_SEQ identified ({x})")
+        else:
+            APP_tok = x
+            log(f"Step 2: partial({x})(N0)(N1) built AppNode → APP identified ({x})")
+
+    assert APP_tok is not None, "Failed to identify APP"
+    assert IO_PUT_tok is not None, "Failed to identify IO_PUT"
+    assert IO_SEQ_tok is not None, "Failed to identify IO_SEQ"
+
+    # ── Step 3: Resolve p group (UNAPP, IO_GET, IO_RDY) ──────────────
+    IO_RDY_tok = None
+    p_subgroup = []
+
+    for x in p_group:
+        result = dot(x, top)
+        if result == top:
+            IO_RDY_tok = x
+            log(f"Step 3: {x}(⊤) returned ⊤ → IO_RDY identified ({x})")
+        else:
+            p_subgroup.append(x)
+
+    assert IO_RDY_tok is not None, "Failed to identify IO_RDY"
+    assert len(p_subgroup) == 2, f"Expected 2 remaining in p group, got {len(p_subgroup)}"
+
+    # ── Step 4: Confirm UNAPP, IO_GET by exclusion ────────────────────
+    app_partial = dot(APP_tok, n0)
+    app_node = dot(app_partial, n1)
+
+    UNAPP_tok = IO_GET_tok = None
+    for x in p_subgroup:
+        bundle = dot(x, app_node)
+        left = dot(bundle, top)
+        if left == n0:
+            UNAPP_tok = x
+            log(f"Step 4: UNAPP confirmed via AppNode destructure ({x})")
+        else:
+            IO_GET_tok = x
+
+    if UNAPP_tok is None:
+        for x in p_subgroup:
+            if x != IO_GET_tok:
+                UNAPP_tok = x
+                break
+
+    assert UNAPP_tok is not None, "Failed to identify UNAPP"
+    if IO_GET_tok is None:
+        IO_GET_tok = [x for x in p_subgroup if x != UNAPP_tok][0]
+    log(f"Step 4: IO_GET identified by exclusion ({IO_GET_tok})")
+    log(f"Phase 2 complete: 8/8 opaque atoms identified")
+
+    return {
+        "QUOTE": QUOTE_tok,
+        "EVAL": EVAL_tok,
+        "APP": APP_tok,
+        "UNAPP": UNAPP_tok,
+        "IO_PUT": IO_PUT_tok,
+        "IO_GET": IO_GET_tok,
+        "IO_RDY": IO_RDY_tok,
+        "IO_SEQ": IO_SEQ_tok,
+    }
 
 
 # ============================================================================
@@ -860,41 +1068,48 @@ def main():
     args = parser.parse_args()
 
     if args.seeds > 0:
-        # Batch mode
-        print(f"Testing {args.seeds} seeds...")
+        # Batch mode: Phase 1a (D1) + Phase 1b (74181) + Phase 2 (opaque)
+        print(f"Testing {args.seeds} seeds (Phase 1 + Phase 2)...")
         failures = []
         for seed in range(args.seeds):
             try:
                 domain, dot, true2hid = make_blackbox(seed)
+
+                # Phase 1a: D1
                 d1 = discover_d1(domain, dot)
-                d2 = discover_d2(domain, dot, d1)
-                ext = discover_74181(domain, dot, d1, d2)
-                # Verify D1
                 for k in ["⊤", "⊥", "e_I", "e_D", "e_M", "e_Σ", "e_Δ",
                           "i", "k", "a", "b", "d_I", "d_K", "m_I", "m_K",
                           "s_C", "p"]:
                     if d1[k] != true2hid[A(k)]:
                         failures.append((seed, k, "d1"))
                         break
-                # Verify D2
-                for k in ["QUOTE", "EVAL", "APP", "UNAPP"]:
-                    if d2[k] != true2hid[A(k)]:
-                        failures.append((seed, k, "d2"))
-                        break
-                # Verify 74181
-                for k in (NAMES_NIBBLES + NAMES_ALU_DISPATCH +
-                          NAMES_ALU_PRED + NAMES_ALU_MISC):
+
+                # Phase 1b: 74181 (Cayley-level)
+                ext, opaque = discover_74181_with_logs(domain, dot, d1, verbose=False)
+                for k in ext:
                     if ext[k] != true2hid[A(k)]:
                         failures.append((seed, k, "74181"))
                         break
+
+                # Phase 2: Term-level recovery of 8 opaque atoms
+                p2 = discover_phase2(opaque, dot, d1, ext, verbose=False)
+                for k in p2:
+                    if p2[k] != true2hid[A(k)]:
+                        failures.append((seed, k, "phase2"))
+                        break
+
             except Exception as e:
                 failures.append((seed, str(e), "crash"))
+
+            if (seed + 1) % 100 == 0:
+                print(f"  ... {seed + 1}/{args.seeds} seeds tested")
+
         if failures:
             print(f"FAILED on {len(failures)} seeds:")
-            for seed, key, phase in failures[:10]:
+            for seed, key, phase in failures[:20]:
                 print(f"  seed={seed}: {phase} failed at {key}")
         else:
-            print(f"All {args.seeds} seeds passed. ✓")
+            print(f"All {args.seeds} seeds passed — 47/47 atoms, 100% recovery rate. ✓")
         return
 
     # ── Single seed demo mode ──
@@ -905,13 +1120,13 @@ def main():
     print("=" * 60)
     print(f"\nBlack-box seed: {args.seed}")
     print(f"Atom domain: {len(domain)} opaque labels")
-    print(f"  (Δ₁ core: 17 + Δ₂ ext: 4 + 74181 ext: 22 = 43 atoms)")
+    print(f"  (Δ₁ core: 17 + Δ₂ ext: 4 + 74181 ext: 22 + IO: 4 = 47 atoms)")
     print(f"\nNO ground truth is used during recovery.")
     print(f"Ground truth is used ONLY for post-hoc verification (✓/✗).")
 
-    # Phase 1: Δ₁
+    # Phase 1a: Δ₁
     print("\n" + "-" * 60)
-    print("  PHASE 1: Recover Δ₁ primitives from behavior")
+    print("  PHASE 1a: Recover Δ₁ primitives from behavior")
     print("-" * 60)
     d1 = discover_d1(domain, dot)
     for k in ["⊤", "⊥", "p", "e_I", "e_D", "e_M", "e_Σ", "e_Δ",
@@ -919,34 +1134,43 @@ def main():
         status = verify(k, d1[k], true2hid)
         print(f"  {k:4s} → {d1[k]}  {status}")
 
-    # Phase 2: Δ₂
+    # Phase 1b: 74181 extension atoms (Cayley-level)
     print("\n" + "-" * 60)
-    print("  PHASE 2: Recover Δ₂ primitives (QUOTE/EVAL/APP/UNAPP)")
+    print("  PHASE 1b: Recover 74181 extension atoms (Cayley-level)")
     print("-" * 60)
-    d2 = discover_d2(domain, dot, d1)
-    for k in ["QUOTE", "EVAL", "APP", "UNAPP"]:
-        status = verify(k, d2[k], true2hid)
-        print(f"  {k:5s} → {d2[k]}  {status}")
-
-    # Phase 3: 74181
-    print("\n" + "-" * 60)
-    print("  PHASE 3: Recover 74181 extension atoms")
-    print("-" * 60)
-    ext = discover_74181(domain, dot, d1, d2, verbose=True)
+    ext, opaque = discover_74181_with_logs(domain, dot, d1, verbose=True)
     print()
-    for k in sorted(ext.keys(), key=lambda k: (
-            0 if k.startswith("N") and len(k) == 2 else
-            1 if k == "N_SUCC" else
-            2 if k.startswith("ALU_L") else
-            3 if k.startswith("ALU_AR") and not k.endswith("C") else
-            4 if k.startswith("ALU_ARI") else
-            5 if k.startswith("ALU_Z") else 6)):
+    for k in ext:
         status = verify(k, ext[k], true2hid)
         print(f"  {k:12s} → {ext[k]}  {status}")
 
-    # Phase 4: Run programs
+    all_ok = all(ext[k] == true2hid[A(k)] for k in ext)
+    if all_ok:
+        print(f"  ✓ All {len(ext)} Phase 1b atoms correctly recovered")
+
+    # Phase 2: Term-level recovery of 8 opaque atoms
     print("\n" + "-" * 60)
-    print("  PHASE 4: Run programs using recovered primitives")
+    print("  PHASE 2: Recover 8 opaque atoms (term-level)")
+    print("-" * 60)
+    p2 = discover_phase2(opaque, dot, d1, ext, verbose=True)
+    print()
+    for k in p2:
+        status = verify(k, p2[k], true2hid)
+        print(f"  {k:12s} → {p2[k]}  {status}")
+
+    all_ok_p2 = all(p2[k] == true2hid[A(k)] for k in p2)
+    if all_ok_p2:
+        print(f"  ✓ All {len(p2)} Phase 2 atoms correctly recovered")
+
+    if all_ok and all_ok_p2:
+        print(f"\n  ✓ All 47 atoms identified — complete recovery")
+
+    # Merge for demos
+    d2 = {k: p2[k] for k in ["QUOTE", "EVAL", "APP", "UNAPP"]}
+
+    # Phase 3: Run programs
+    print("\n" + "-" * 60)
+    print("  PHASE 3: Run programs using recovered primitives")
     print("-" * 60)
 
     # D2 demos
