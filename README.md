@@ -8,7 +8,7 @@
 
 ---
 
-## Three Theorems, Five Extensions, and a Hardware Emulator
+## Three Theorems, Five Extensions, and a OISC Hardware Emulator
 
 This repository contains Lean 4 formalizations of five results about finite algebraic structures that model themselves, plus a Python implementation extending the algebra to 66 atoms with a full 74181 ALU, 32-bit wide arithmetic, 16-bit multiply, byte-level IO, and a QUALE symmetry-breaker — all uniquely recoverable from a scrambled Cayley ROM by a dedicated hardware scanner.
 
