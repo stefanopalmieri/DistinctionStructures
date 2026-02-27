@@ -6,6 +6,8 @@
 
 **A minimal self-modeling framework for relational description, with machine-checked proofs in Lean 4.**
 
+<p align="center"><sub>In loving memory of Boba</sub></p>
+
 ---
 
 ## Three Theorems, Five Extensions, and a OISC Hardware Emulator
