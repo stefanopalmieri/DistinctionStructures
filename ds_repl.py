@@ -55,6 +55,7 @@ import itertools
 import re
 
 from lark import Lark, Transformer, v_args
+from kamea import alu_74181
 
 # ============================================================
 # PEG Grammar (Lark Earley/LALR with PEG-like rules)
@@ -134,6 +135,41 @@ class Partial:
     f: Any
     def __repr__(self): return f"#partial[{format_val(self.f)}]"
 
+@dataclass(frozen=True)
+class ALUPartial1:
+    """ALU dispatch with selector applied, waiting for operand A."""
+    mode: str       # "logic", "arith", "arithc"
+    selector: int   # 0-15
+    def __repr__(self): return f"#alu1[{self.mode} N{self.selector:X}]"
+
+@dataclass(frozen=True)
+class ALUPartial2:
+    """ALU dispatch with selector and operand A applied, waiting for B."""
+    mode: str
+    selector: int
+    a: int          # 0-15
+    def __repr__(self): return f"#alu2[{self.mode} N{self.selector:X} N{self.a:X}]"
+
+@dataclass(frozen=True)
+class ALUCoutProbe:
+    """ALU_COUT applied to an ALUPartial2 — awaiting operand B to extract real Cn+4."""
+    mode: str
+    selector: int
+    a: int
+    def __repr__(self): return f"#cout[{self.mode} N{self.selector:X} N{self.a:X}]"
+
+@dataclass(frozen=True)
+class IOPutPartial:
+    """IO_PUT with high nibble applied, awaiting low nibble."""
+    hi: int  # high nibble 0-15
+    def __repr__(self): return f"#io-put[:N{self.hi:X}]"
+
+@dataclass(frozen=True)
+class IOSeqPartial:
+    """IO_SEQ with first action result applied, awaiting second."""
+    first: Any
+    def __repr__(self): return f"#io-seq[...]"
+
 class List:
     def __init__(self, items):
         self.items = items
@@ -183,12 +219,33 @@ def parse(text: str):
 # Δ₁ Core: The 17-element Cayley table
 # ============================================================
 
-ATOMS = [
+ATOMS_D1 = [
     "top", "bot", "i", "k", "a", "b", "e_I",
     "e_D", "e_M", "e_Sigma", "e_Delta",
     "d_I", "d_K", "m_I", "m_K", "s_C", "p",
 ]
+NIBBLE_NAMES = [f"N{i:X}" for i in range(16)]
+ALU_DISPATCH_NAMES = ["ALU_LOGIC", "ALU_ARITH", "ALU_ARITHC"]
+ALU_PRED_NAMES = ["ALU_ZERO", "ALU_COUT"]
+ALU_MISC_NAMES = ["N_SUCC"]
+IO_NAMES = ["IO_PUT", "IO_GET", "IO_RDY", "IO_SEQ"]
+
+ATOMS = ATOMS_D1 + NIBBLE_NAMES + ALU_DISPATCH_NAMES + ALU_PRED_NAMES + ALU_MISC_NAMES + IO_NAMES
 ATOM_SET = set(ATOMS)
+NIBBLE_SET = set(NIBBLE_NAMES)
+ALU_DISPATCH_SET = set(ALU_DISPATCH_NAMES)
+ALU_PRED_SET = set(ALU_PRED_NAMES)
+IO_SET = set(IO_NAMES)
+
+
+def is_nibble_name(name: str) -> bool:
+    return name in NIBBLE_SET
+
+def nibble_val(name: str) -> int:
+    return int(name[1:], 16)
+
+def nibble_name(n: int) -> str:
+    return f"N{n % 16:X}"
 
 # DS-native data encoding constants
 ANSI_MIN = 0
@@ -419,6 +476,57 @@ def dot_d1(x: str, y: str) -> str:
         return x
     return "p"
 
+
+def dot_atom(x: str, y: str) -> str:
+    """Full 47-atom Cayley table (Δ₁ + 74181 extension + IO)."""
+    # D1 atoms use the original table (works for D1 × anything since
+    # D1 testers return bot for non-D1 atoms except m_I which returns top)
+    if x in ATOMS_D1:
+        return dot_d1(x, y)
+
+    # Nibble self-identification on top
+    if is_nibble_name(x) and y == "top":
+        return x
+
+    # Nibble × Nibble: Z/16Z addition
+    if is_nibble_name(x) and is_nibble_name(y):
+        return nibble_name((nibble_val(x) + nibble_val(y)) % 16)
+
+    # ALU dispatch self-identification on top
+    if x in ALU_DISPATCH_SET and y == "top":
+        return x
+
+    # ALU dispatch × Nibble: distinguishing mappings
+    if x == "ALU_LOGIC" and is_nibble_name(y):
+        return y  # identity
+    if x == "ALU_ARITH" and is_nibble_name(y):
+        return nibble_name((nibble_val(y) + 1) % 16)  # successor
+    if x == "ALU_ARITHC" and is_nibble_name(y):
+        return nibble_name((nibble_val(y) + 2) % 16)  # double successor
+
+    # ALU predicate self-identification on top
+    if x in ALU_PRED_SET and y == "top":
+        return x
+
+    # ALU_ZERO: tester on nibbles
+    if x == "ALU_ZERO" and is_nibble_name(y):
+        return "top" if y == "N0" else "bot"
+
+    # ALU_COUT: tester on nibbles (high bit)
+    if x == "ALU_COUT" and is_nibble_name(y):
+        return "top" if nibble_val(y) >= 8 else "bot"
+
+    # N_SUCC: successor on nibbles (16-cycle)
+    if x == "N_SUCC" and y == "top":
+        return x
+    if x == "N_SUCC" and y == "bot":
+        return "N0"  # reset on bot
+    if x == "N_SUCC" and is_nibble_name(y):
+        return nibble_name((nibble_val(y) + 1) % 16)
+
+    # Default: everything else → p
+    return "p"
+
 # ============================================================
 # Δ₃ Evaluator
 # ============================================================
@@ -463,15 +571,88 @@ def ds_apply(left: Any, right: Any, fuel: int = MAX_FUEL) -> Any:
             return left.x
         return Keyword("p")
 
-    # Inertness: structured values under atoms
-    if isinstance(left, Keyword) and left.name in ATOM_SET:
-        if isinstance(right, (Quoted, Literal, AppNode, Bundle, Partial)):
+    # ALU dispatch × nibble → ALUPartial1
+    if isinstance(left, Keyword) and left.name in ALU_DISPATCH_SET:
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            mode = {"ALU_LOGIC": "logic", "ALU_ARITH": "arith", "ALU_ARITHC": "arithc"}[left.name]
+            return ALUPartial1(mode, nibble_val(right.name))
+
+    # ALUPartial1 + nibble → ALUPartial2
+    if isinstance(left, ALUPartial1):
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            return ALUPartial2(left.mode, left.selector, nibble_val(right.name))
+        return Keyword("p")
+
+    # ALUPartial2 + nibble → computed result (just the nibble)
+    if isinstance(left, ALUPartial2):
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            result, carry, zero = alu_74181(left.mode, left.selector, left.a, nibble_val(right.name))
+            return Keyword(nibble_name(result))
+        return Keyword("p")
+
+    # IO_PUT + nibble → IOPutPartial(nibble_val)
+    if isinstance(left, Keyword) and left.name == "IO_PUT":
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            return IOPutPartial(nibble_val(right.name))
+
+    # IOPutPartial + nibble → write byte to stdout, return ⊤
+    if isinstance(left, IOPutPartial):
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            byte_val = (left.hi << 4) | nibble_val(right.name)
+            import sys
+            sys.stdout.write(chr(byte_val))
+            sys.stdout.flush()
+            return Keyword("top")
+        return Keyword("p")
+
+    # IO_GET + ⊤ → read one byte from stdin, return AppNode(hi_nibble, lo_nibble)
+    if isinstance(left, Keyword) and left.name == "IO_GET":
+        if isinstance(right, Keyword) and right.name == "top":
+            import sys
+            ch = sys.stdin.read(1)
+            if ch:
+                code = ord(ch)
+                hi = (code >> 4) & 0xF
+                lo = code & 0xF
+                return AppNode(Keyword(nibble_name(hi)), Keyword(nibble_name(lo)))
             return Keyword("p")
 
-    # Δ₁ fallback
+    # IO_RDY + ⊤ → return ⊤
+    if isinstance(left, Keyword) and left.name == "IO_RDY":
+        if isinstance(right, Keyword) and right.name == "top":
+            return Keyword("top")
+
+    # IO_SEQ + any → IOSeqPartial(value)
+    if isinstance(left, Keyword) and left.name == "IO_SEQ":
+        return IOSeqPartial(right)
+
+    # IOSeqPartial + any → return right (discard first, effects already fired)
+    if isinstance(left, IOSeqPartial):
+        return right
+
+    # ALU_COUT modal: on ALUPartial2, becomes carry probe awaiting B
+    if isinstance(left, Keyword) and left.name == "ALU_COUT":
+        if isinstance(right, ALUPartial2):
+            return ALUCoutProbe(right.mode, right.selector, right.a)
+
+    # ALUCoutProbe + nibble → real Cn+4 carry-out
+    if isinstance(left, ALUCoutProbe):
+        if isinstance(right, Keyword) and is_nibble_name(right.name):
+            _, carry, _ = alu_74181(left.mode, left.selector, left.a, nibble_val(right.name))
+            return Keyword("top" if carry else "bot")
+        return Keyword("p")
+
+    # Inertness: structured values under atoms
+    if isinstance(left, Keyword) and left.name in ATOM_SET:
+        if isinstance(right, (Quoted, Literal, AppNode, Bundle, Partial,
+                              ALUPartial1, ALUPartial2, ALUCoutProbe,
+                              IOPutPartial, IOSeqPartial)):
+            return Keyword("p")
+
+    # Atom × Atom fallback (full 43-atom Cayley table)
     if isinstance(left, Keyword) and isinstance(right, Keyword):
         if left.name in ATOM_SET and right.name in ATOM_SET:
-            return Keyword(dot_d1(left.name, right.name))
+            return Keyword(dot_atom(left.name, right.name))
 
     return Keyword("p")
 
@@ -806,7 +987,7 @@ def repl_eval(expr: Any) -> Any:
         if expr.name in ATOM_SET:
             return Keyword(expr.name)
         # Check special atoms
-        if expr.name in ("QUOTE", "EVAL", "APP", "UNAPP"):
+        if expr.name in ("QUOTE", "EVAL", "APP", "UNAPP") or expr.name in IO_SET:
             return Keyword(expr.name)
         raise NameError(f"Unbound symbol: {expr.name}")
 
@@ -1022,7 +1203,7 @@ def quote_transform(expr: Any) -> Any:
     if isinstance(expr, HexByte):
         return Literal(expr)
     if isinstance(expr, Symbol):
-        if expr.name in ATOM_SET or expr.name in ("QUOTE", "EVAL", "APP", "UNAPP"):
+        if expr.name in ATOM_SET or expr.name in ("QUOTE", "EVAL", "APP", "UNAPP") or expr.name in IO_SET:
             return Keyword(expr.name)
         if expr.name in ENV:
             return ENV[expr.name]
@@ -1220,6 +1401,16 @@ def format_val(v: Any) -> str:
         return f"#bundle[{format_val(v.f)} {format_val(v.x)}]"
     if isinstance(v, Partial):
         return f"#partial[{format_val(v.f)}]"
+    if isinstance(v, ALUPartial1):
+        return f"#alu1[{v.mode} :N{v.selector:X}]"
+    if isinstance(v, ALUPartial2):
+        return f"#alu2[{v.mode} :N{v.selector:X} :N{v.a:X}]"
+    if isinstance(v, ALUCoutProbe):
+        return f"#cout[{v.mode} :N{v.selector:X} :N{v.a:X}]"
+    if isinstance(v, IOPutPartial):
+        return f"#io-put[:N{v.hi:X}]"
+    if isinstance(v, IOSeqPartial):
+        return f"#io-seq[{format_val(v.first)}]"
     if isinstance(v, List):
         return "(" + " ".join(format_val(i) for i in v.items) + ")"
     if isinstance(v, Symbol):
@@ -1234,7 +1425,7 @@ def format_val(v: Any) -> str:
 def repl():
     """Interactive REPL."""
     print("Distinction Structures REPL")
-    print("  21 atoms: 17 from Δ₁ + QUOTE, EVAL, APP, UNAPP")
+    print("  47 atoms: 17 Δ₁ + 4 Δ₂ + 16 nibbles + 3 ALU dispatch + 2 ALU pred + N_SUCC + 4 IO")
     print('  DS-native text: bit -> byte -> char -> string ("hello")')
     print("  Type (discover!) to run self-discovery")
     print("  Type (table) to see the Cayley table")
