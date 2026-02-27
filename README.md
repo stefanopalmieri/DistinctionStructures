@@ -54,6 +54,18 @@ The self-model was designed in. The 17 elements of Δ₁ were chosen to make rec
 
 **The strong claim (false in general).** Almost all finite magmas are rigid — a random magma on n elements has trivial automorphism group with probability approaching 1 as n grows. Most of these rigid magmas have no absorber, no identity, no non-trivial sub-magma, no recognizable structure at all. They are scramble-resilient in the model-theoretic sense (every element is definable, so the scrambling permutation is uniquely determined) but contain nothing resembling a self-model. Rigidity alone does not force self-modeling.
 
+An empirical census (`rigid_census.py`) confirms this quantitatively. Sampling 100,000 random magmas at each order and checking for rigidity and structural features:
+
+| n | Rigid | Structureless rigid | Has non-trivial sub | Has absorber | Has identity |
+|---|-------|--------------------|--------------------|-------------|-------------|
+| 3 (exhaustive) | 98.7% | 37.5% | 50.7% | 10.4% | 10.4% |
+| 4 | 100.0% | 51.8% | 45.8% | 1.5% | 1.6% |
+| 5 | 100.0% | 65.6% | 34.1% | 0.2% | 0.2% |
+| 6 | 100.0% | 76.4% | 23.6% | <0.1% | <0.1% |
+| 7 | 100.0% | 83.9% | 16.1% | <0.1% | <0.1% |
+
+"Structureless rigid" means rigid, all rows distinct, yet no absorber, no identity, and no non-trivial sub-magma. By n = 7, **84% of random magmas are structureless rigid** — they have trivial automorphism group and are therefore model-theoretically recoverable, but offer no algebraic landmarks whatsoever. The fraction grows monotonically and appears to approach 1. Meanwhile, absorbers and identities (the features Δ₁ exploits for recovery) are vanishingly rare. The Kamea's self-modeling sub-algebra is not something you stumble into; it is a carefully engineered exception to the generic case.
+
 **The key distinction: definability vs. algorithmic recoverability.** A rigid magma guarantees that each element has *some* first-order formula that picks it out. But those formulas may require quantifier depth proportional to n, making recovery equivalent to brute-force search through Sym(n). The self-model turns this exponential problem into a polynomial one. The 8-step Δ₁ recovery is a sequence of O(n²) table scans, each narrowing the search space. The self-model provides *landmarks* — elements with unique, cheaply-testable algebraic signatures — that guide the search.
 
 **The real question is about efficiency.** This suggests the theorem isn't about rigidity at all, but about the complexity of recovery:
@@ -93,6 +105,7 @@ DistinctionStructures/
 │   ├── ActualityIrreducibility.lean             # Actuality irreducibility theorem
 │   ├── Delta2.lean                              # Δ₂: flat quoting (finite, decidable)
 │   └── Delta3.lean                              # Δ₃: recursive eval (fuel-bounded)
+├── rigid_census.py                              # Empirical census of small rigid magmas (structural statistics)
 ├── kamea.py                                     # Core 66-atom algebra (D1+D2+74181+IO+W32+MUL+QUALE)
 ├── kamea_blackbox.py                            # Black-box recovery (48-atom subset)
 ├── ds_repl.py                                   # Interactive REPL with all 66 atoms
@@ -355,6 +368,8 @@ The `kamea_blackbox.py` module implements term-level black-box recovery for a 48
 The hardware `CayleyScanner` (`emulator/scanner.py`) recovers all 66 atoms from a scrambled Cayley ROM using only ROM reads — no heap, no stack, no eval/apply. Verified across 100+ seeds.
 
 The `ds_repl.py` interactive REPL provides an eval/apply interpreter for the full 66-atom algebra with real IO effects (stdout/stdin).
+
+The `rigid_census.py` script samples random magmas on n = 3..8 elements and computes structural statistics: automorphism group size, absorbers, identities, idempotents, row/column uniqueness, non-trivial sub-magmas, and the "structureless rigid" count. Results confirm that the vast majority of random rigid magmas lack the algebraic landmarks that Δ₁ exploits for efficient recovery (see "Open Question" above).
 
 The `ai_interpretability/` directory contains neural network experiments testing whether the recovery procedure transfers to learned approximations of the algebra.
 
