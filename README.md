@@ -63,8 +63,9 @@ An empirical census (`rigid_census.py`) confirms this quantitatively. Sampling 1
 | 5 | 100.0% | 65.6% | 34.1% | 0.2% | 0.2% |
 | 6 | 100.0% | 76.4% | 23.6% | <0.1% | <0.1% |
 | 7 | 100.0% | 83.9% | 16.1% | <0.1% | <0.1% |
+| 8 | 100.0% | 88.3% | 11.7% | 0% | <0.1% |
 
-"Structureless rigid" means rigid, all rows distinct, yet no absorber, no identity, and no non-trivial sub-magma. By n = 7, **84% of random magmas are structureless rigid** — they have trivial automorphism group and are therefore model-theoretically recoverable, but offer no algebraic landmarks whatsoever. The fraction grows monotonically and appears to approach 1. Meanwhile, absorbers and identities (the features Δ₁ exploits for recovery) are vanishingly rare. The Kamea's self-modeling sub-algebra is not something you stumble into; it is a carefully engineered exception to the generic case.
+"Structureless rigid" means rigid, all rows distinct, yet no absorber, no identity, and no non-trivial sub-magma. By n = 8, **88% of random magmas are structureless rigid** — they have trivial automorphism group and are therefore model-theoretically recoverable, but offer no algebraic landmarks whatsoever. The fraction grows monotonically and appears to approach 1. Meanwhile, absorbers and identities (the features Δ₁ exploits for recovery) are vanishingly rare. The Kamea's self-modeling sub-algebra is not something you stumble into; it is a carefully engineered exception to the generic case.
 
 **The key distinction: definability vs. algorithmic recoverability.** A rigid magma guarantees that each element has *some* first-order formula that picks it out. But those formulas may require quantifier depth proportional to n, making recovery equivalent to brute-force search through Sym(n). The self-model turns this exponential problem into a polynomial one. The 8-step Δ₁ recovery is a sequence of O(n²) table scans, each narrowing the search space. The self-model provides *landmarks* — elements with unique, cheaply-testable algebraic signatures — that guide the search.
 
