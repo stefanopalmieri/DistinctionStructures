@@ -48,6 +48,37 @@ The QUALE extension addresses a fundamental obstruction: as the algebra grows, g
 
 ---
 
+## Open Question: Is Self-Modeling Necessary?
+
+The self-model was designed in. The 17 elements of Δ₁ were chosen to make recovery work. The QUALE column was hand-crafted to break the S₂₆ symmetry. The natural objection: this is a construction, not a necessity result. Maybe a computationally equivalent algebra could be scramble-resilient without containing a self-model.
+
+**The strong claim (false in general).** Almost all finite magmas are rigid — a random magma on n elements has trivial automorphism group with probability approaching 1 as n grows. Most of these rigid magmas have no absorber, no identity, no non-trivial sub-magma, no recognizable structure at all. They are scramble-resilient in the model-theoretic sense (every element is definable, so the scrambling permutation is uniquely determined) but contain nothing resembling a self-model. Rigidity alone does not force self-modeling.
+
+**The key distinction: definability vs. algorithmic recoverability.** A rigid magma guarantees that each element has *some* first-order formula that picks it out. But those formulas may require quantifier depth proportional to n, making recovery equivalent to brute-force search through Sym(n). The self-model turns this exponential problem into a polynomial one. The 8-step Δ₁ recovery is a sequence of O(n²) table scans, each narrowing the search space. The self-model provides *landmarks* — elements with unique, cheaply-testable algebraic signatures — that guide the search.
+
+**The real question is about efficiency.** This suggests the theorem isn't about rigidity at all, but about the complexity of recovery:
+
+> *Conjecture (Efficient Scramble-Resilience Requires Landmarks).* If a finite algebra (A, ·) with |A| = n admits a recovery algorithm using O(n^c) oracle queries, then A contains a landmark set L of size O(n^ε) for some ε < 1, where each element of L is definable by a formula of bounded quantifier complexity, and L generates enough structure to define all remaining elements. If L is closed under the operation, it constitutes a self-model.
+
+This is related to the *individualization-refinement* paradigm in graph isomorphism: efficient isomorphism testing proceeds by finding a small set of vertices that break all symmetries. Babai's quasi-polynomial GI algorithm is built on this principle. The analogous statement for Cayley tables would be that efficient recovery requires structural landmarks.
+
+**What this project demonstrates.** The contribution is not that self-modeling is logically necessary for scramble-resilience (it isn't). It is that a specific *architecture* of recovery — absorbers → testers → encoders → contexts → synthesis, where each layer's recoverability depends on the previous layer — enables polynomial-time recovery from arbitrary permutations, and this layered dependency structure *is* the self-model. The self-model is the recovery algorithm's dependency graph, reified as a sub-algebra.
+
+The QUALE element addresses the residual gap: Δ₁ identifies 40 of 66 atoms; the remaining 26 are in the kernel of all structural tests. Any extension to total rigidity must inject information distinguishing them. QUALE is the minimal such injection: one element, one column, 26 distinct values drawn from already-identified landmarks. Information-theoretically, you need at least ⌈log₂(26)⌉ ≈ 5 bits per opaque atom; QUALE provides ~5.3 bits per column entry. You can't do better with a single column.
+
+**A hierarchy of rigidity:**
+
+| Level | Type | Recovery cost | Example |
+|-------|------|---------------|---------|
+| 0 | Brute-force rigid | Exponential (search Sym(n)) | Random rigid magma |
+| 1 | Landmark-rigid | Polynomial (identify landmarks, then resolve) | Δ₁ for 40/66 atoms |
+| 2 | Totally landmark-rigid | Polynomial (all atoms resolved) | Full 66-atom Kamea |
+| 3 | Self-documenting | Polynomial, with landmarks forming a sub-algebra | Δ₁ as a self-model |
+
+This project lives at Level 3. The open question is whether Level 2 secretly implies Level 3 — whether any algebra with enough landmarks for total polynomial-time recovery necessarily has those landmarks forming a self-referential sub-structure. This remains unproved.
+
+---
+
 ## Repository Structure
 
 ```
@@ -313,6 +344,7 @@ Each step adds exactly one capability. The formalizability boundary falls betwee
 - **Categorical formalization.** The category-theoretic perspective is discussed in the document but not formalized in Lean.
 - **Δ₃ termination.** The fuel parameter makes Δ₃ total, but we do not prove that for every finite term there exists sufficient fuel (this is true but requires a separate well-foundedness argument).
 - **Kamea Lean formalization.** The 66-atom extension is verified empirically in Python (1000+ seeds, 100% recovery via QUALE). Lean proofs for the extension atoms' uniqueness theorems are planned but not yet implemented.
+- **Necessity of self-modeling.** We show that self-modeling *enables* efficient scramble-resilience; we do not prove it is *required*. The conjecture that polynomial-time recovery implies the existence of a landmark sub-algebra (see "Open Question" above) remains open.
 
 ## Empirical Testing
 
