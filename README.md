@@ -1,13 +1,3 @@
-```
-      ██╗  ██╗ █████╗ ███╗   ███╗███████╗ █████╗
-      ██║ ██╔╝██╔══██╗████╗ ████║██╔════╝██╔══██╗
-      █████╔╝ ███████║██╔████╔██║█████╗  ███████║
-      ██╔═██╗ ██╔══██║██║╚██╔╝██║██╔══╝  ██╔══██║
-      ██║  ██╗██║  ██║██║ ╚═╝ ██║███████╗██║  ██║
-      ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝
-
-```
-
 <p align="center">
   <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Albrecht_D%C3%BCrer_-_Melencolia_I_-_Google_Art_Project_%28_AGDdr3EHmNGyA%29.jpg/1280px-Albrecht_D%C3%BCrer_-_Melencolia_I_-_Google_Art_Project_%28_AGDdr3EHmNGyA%29.jpg" width="300" alt="Albrecht Dürer — Melencolia I (1514)" />
 </p>
