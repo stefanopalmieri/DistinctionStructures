@@ -30,7 +30,7 @@ from emulator.machine import (
 )
 from emulator.host import EmulatorHost
 from emulator.fingerprint import (
-    FP_TOP, FP_BOT,
+    NAME_TO_FP, FP_TOP, FP_BOT,
     FP_W_PACK8, FP_W_LO, FP_W_HI, FP_W_MERGE, FP_W_NIB, FP_W_NOT,
     FP_W_ADD, FP_W_SUB, FP_W_CMP, FP_W_XOR, FP_W_AND, FP_W_OR,
     FP_W_SHL, FP_W_SHR, FP_W_ROTL, FP_W_ROTR,
@@ -386,7 +386,7 @@ def _results_match(ref, result_word: int, host: EmulatorHost) -> bool:
     if isinstance(ref, Atom):
         if tag != TAG_ATOM:
             return False
-        return (left & 0x7F) == cayley.NAME_TO_IDX.get(ref.name, -1)
+        return (left & 0x7F) == NAME_TO_FP.get(ref.name, -1)
 
     if isinstance(ref, Quote):
         if tag != TAG_QUOTED:

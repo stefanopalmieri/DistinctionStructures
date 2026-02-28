@@ -90,11 +90,15 @@ class TestFingerprintRom:
 
 class TestFingerprintEncoding:
 
-    def test_nibble_fingerprints_equal_values(self):
-        """Nibble fingerprints 0x00-0x0F equal nibble values 0-15."""
-        for i in range(16):
-            name = f"N{i:X}"
-            assert NAME_TO_FP[name] == i
+    def test_nibble_fingerprints_distinct(self):
+        """All 16 nibble fingerprints are distinct."""
+        nibble_fps = {NAME_TO_FP[f"N{i:X}"] for i in range(16)}
+        assert len(nibble_fps) == 16
+
+    def test_all_fingerprints_in_range(self):
+        """All fingerprints are in [0, NUM_FP)."""
+        for name, fp in NAME_TO_FP.items():
+            assert 0 <= fp < NUM_FP, f"{name} has fp {fp} outside [0, {NUM_FP})"
 
     def test_atom_word_stores_fingerprint(self):
         """make_atom_word stores fingerprint in left field."""

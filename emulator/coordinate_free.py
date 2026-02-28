@@ -132,6 +132,6 @@ def run_coordinate_free(program: CoordinateFreeProgram,
     If no ROM provided, uses the canonical Cayley table.
     Returns (eval_result, host).
     """
-    rom = cayley_rom or cayley.build_cayley_rom()
+    rom = cayley_rom or cayley.build_fingerprint_rom()
     loader = InvariantLoader(rom)
     return loader.load_and_eval(program)

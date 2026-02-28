@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ds_repl import parse, Keyword, Symbol, List, Quoted, HexByte, AppNode
 from emulator.cayley import NAME_TO_IDX
+from emulator.fingerprint import FP_TOP
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +115,8 @@ def ast_to_term(node, env: dict[str, RawWord]):
                 cond_term = ast_to_term(items[1], env)
                 if isinstance(cond_term, RawWord):
                     from emulator.machine import unpack_word, TAG_ATOM
-                    from emulator.cayley import TOP
                     tag, left, _, _ = unpack_word(cond_term.word)
-                    is_true = (tag == TAG_ATOM and (left & 0x7F) == TOP)
+                    is_true = (tag == TAG_ATOM and (left & 0x7F) == FP_TOP)
                     branch = items[2] if is_true else items[3]
                     return ast_to_term(branch, env)
                 raise ValueError(

@@ -15,7 +15,9 @@ from .chips import EEPROM, IC74181, SRAM, Register, FIFO
 from . import cayley
 from .fingerprint import (
     NUM_FP,
-    FP_N0, FP_NF, FP_TOP, FP_BOT, FP_P,
+    FP_N0, FP_N1, FP_N2, FP_N3, FP_N4, FP_N5, FP_N6, FP_N7,
+    FP_N8, FP_N9, FP_NA, FP_NB, FP_NC, FP_ND, FP_NE, FP_NF,
+    FP_TOP, FP_BOT, FP_P,
     FP_I, FP_K, FP_QUOTE, FP_EVAL, FP_APP, FP_UNAPP,
     FP_ALU_LOGIC, FP_ALU_ARITH, FP_ALU_ARITHC,
     FP_ALU_ZERO, FP_ALU_COUT, FP_N_SUCC, FP_QUALE,
@@ -23,6 +25,7 @@ from .fingerprint import (
     FP_W_PACK8, FP_W_LO, FP_W_HI, FP_W_MERGE, FP_W_NIB,
     FP_W_NOT, FP_MUL16, FP_MAC16,
     FP_ALU_DISPATCH_SET, FP_W32_BINARY_OPS,
+    FP_NIBBLES, FP_TO_NIBBLE_VAL, NIBBLE_VAL_TO_FP,
 )
 
 
@@ -284,21 +287,20 @@ class KameaMachine:
         self.stack_peak = 0
 
     # -------------------------------------------------------------------
-    # Fingerprint-based nibble helpers
-    # Nibble fingerprints 0x00-0x0F equal nibble values 0-15.
+    # Fingerprint-based nibble helpers (set/dict lookups — O(1))
     # -------------------------------------------------------------------
 
     @staticmethod
     def _is_nibble(fp: int) -> bool:
-        return 0x00 <= fp <= 0x0F
+        return fp in FP_NIBBLES
 
     @staticmethod
     def _nibble_val(fp: int) -> int:
-        return fp
+        return FP_TO_NIBBLE_VAL[fp]
 
     @staticmethod
     def _nibble_fp(val: int) -> int:
-        return val & 0xF
+        return NIBBLE_VAL_TO_FP[val & 0xF]
 
     # -------------------------------------------------------------------
     # Cache management
