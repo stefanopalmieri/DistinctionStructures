@@ -150,14 +150,16 @@ DistinctionStructures/
 │   ├── chips.py                                 # Hardware primitives (EEPROM, IC74181, SRAM, Register, FIFO)
 │   ├── cayley.py                                # Cayley ROM builder (66×66 byte array)
 │   ├── machine.py                               # Clocked eval/apply state machine (64-bit words)
-│   ├── host.py                                  # High-level interface (ROM or neural backend)
+│   ├── host.py                                  # High-level interface (ROM, neural, or LLM backend)
 │   ├── fingerprint.py                           # Structural fingerprints (66 canonical ordinals)
 │   ├── coordinate_free.py                       # Coordinate-free program construction
 │   ├── neural_dot.py                            # Neural Cayley table (MLP memorizing dot)
 │   ├── neural_machine.py                        # Neural-backend machine variant
+│   ├── llm_dot.py                               # LLM dot backend (Ollama) + mock fallback
+│   ├── llm_machine.py                           # LLM-backend machine variant
 │   ├── scanner.py                               # CayleyScanner: boot-time hardware recovery module
 │   ├── recovery.py                              # Black-box recovery via dispatch unit + scanner
-│   ├── debugger.py                              # Textual TUI debugger (--neural flag)
+│   ├── debugger.py                              # Textual TUI debugger (--neural / --llm flags)
 │   ├── test_machine.py                          # Verification suite (4356 atom pairs, 768 ALU ops)
 │   ├── test_fingerprint.py                      # Fingerprint ROM algebra tests
 │   └── test_coordinate_free.py                  # Coordinate-free loader tests
@@ -166,6 +168,8 @@ DistinctionStructures/
 │   ├── io_demo.ds                               # IO atoms demo (prints "Hi!")
 │   ├── alu_74181_demo.ds                        # ALU operations demo
 │   ├── neural_dot_demo.py                       # Neural Cayley table training + dimension sweep
+│   ├── llm_demo.ds                              # "answer is 42\n" with dot-computed digits
+│   ├── llm_injection_demo.py                    # Four-backend comparison + data poisoning demo
 │   ├── fingerprint_demo.py                      # Fingerprint-addressed ROM demo
 │   └── coordinate_free_demo.py                  # Coordinate-free program demo
 ├── ai_interpretability/                         # ML interpretability experiments
@@ -343,6 +347,25 @@ uv run python -m emulator.debugger --neural examples/hello_world.ds
 
 # Training + dimension sweep demo
 uv run python -m examples.neural_dot_demo
+```
+
+**LLM backend:** The emulator can also use a local LLM (via Ollama) as the dot oracle. Each query sends only the relevant Cayley row to the model, which pattern-matches the answer — no arithmetic required. This works reliably with models as small as 0.6B parameters.
+
+A data-poisoning demo (`llm_injection_demo.py`) runs the same program on all four backends: ROM, Neural MLP, LLM (honest), and LLM (poisoned). The poisoned backend tampers one entry in the Cayley row sent to the LLM — `dot(N0,N2)=N4` instead of `=N2` — and the model faithfully reads the tampered data, changing the program output from `"answer is 42"` to `"answer is 44"`. Same program, same model weights, one bit of poisoned context.
+
+```
+  ROM:           'answer is 42\n'
+  Neural MLP:    'answer is 42\n'
+  LLM honest:    'answer is 42\n'
+  LLM poisoned:  'answer is 44\n'
+```
+
+```bash
+# Four-backend comparison (requires Ollama; falls back to mock without it)
+uv run python -m examples.llm_injection_demo
+
+# Step through with LLM backend in the TUI debugger
+uv run python -m emulator.debugger --llm examples/llm_demo.ds
 ```
 
 **Recovery comparison:**
