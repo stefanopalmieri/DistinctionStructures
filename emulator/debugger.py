@@ -407,12 +407,15 @@ def main():
     parser.add_argument("-e", "--expr", help="Single expression to evaluate")
     parser.add_argument("--run", action="store_true",
                         help="Run to completion immediately (auto-run mode)")
+    parser.add_argument("--neural", action="store_true",
+                        help="Use neural MLP backend instead of ROM for dot")
     args = parser.parse_args()
 
     if not args.file and not args.expr:
         parser.error("Provide a .ds file or -e expression")
 
-    runner = ProgramRunner()
+    backend = "neural" if args.neural else "rom"
+    runner = ProgramRunner(backend=backend)
 
     try:
         if args.file:

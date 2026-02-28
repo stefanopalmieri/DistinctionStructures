@@ -146,6 +146,28 @@ def build_cayley_rom_scrambled(seed: int) -> tuple[bytes, list[int]]:
     return bytes(rom), perm
 
 
+def build_fingerprint_rom() -> bytes:
+    """
+    Build the Cayley table addressed and valued entirely in fingerprint space.
+
+    Layout: rom[fp_x * NUM_FP + fp_y] = fp_z where fp values are canonical
+    fingerprint ordinals (0x00-0x41). This is a fixed canonical constant —
+    the same bytes regardless of any physical permutation.
+
+    Total size: 66 * 66 = 4356 bytes (same as physical ROM).
+    """
+    from .fingerprint import NAME_TO_FP, NUM_FP
+    rom = bytearray(NUM_FP * NUM_FP)
+    for xn in ALL_NAMES:
+        for yn in ALL_NAMES:
+            result = atom_dot(A(xn), A(yn))
+            x_fp = NAME_TO_FP[xn]
+            y_fp = NAME_TO_FP[yn]
+            r_fp = NAME_TO_FP[result.name]
+            rom[x_fp * NUM_FP + y_fp] = r_fp
+    return bytes(rom)
+
+
 if __name__ == "__main__":
     rom = build_cayley_rom()
     print(f"Cayley ROM: {len(rom)} bytes ({NUM_ATOMS}×{NUM_ATOMS})")

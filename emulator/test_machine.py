@@ -29,6 +29,13 @@ from emulator.machine import (
     S_DONE, S_HALTED, S_FETCH,
 )
 from emulator.host import EmulatorHost
+from emulator.fingerprint import (
+    FP_TOP, FP_BOT,
+    FP_W_PACK8, FP_W_LO, FP_W_HI, FP_W_MERGE, FP_W_NIB, FP_W_NOT,
+    FP_W_ADD, FP_W_SUB, FP_W_CMP, FP_W_XOR, FP_W_AND, FP_W_OR,
+    FP_W_SHL, FP_W_SHR, FP_W_ROTL, FP_W_ROTR,
+    FP_MUL16, FP_MAC16,
+)
 
 
 def test_cayley_rom():
@@ -445,12 +452,12 @@ def test_w32_pack8():
     errors = 0
 
     # Pack 0x12345678
-    pack_atom = make_atom_word(m.W_PACK8)
+    pack_atom = make_atom_word(FP_W_PACK8)
     nibbles = [1, 2, 3, 4, 5, 6, 7, 8]
 
-    val = _w32_dispatch(host, pack_atom, make_atom_word(m._nibble_idx(nibbles[0])))
+    val = _w32_dispatch(host, pack_atom, make_atom_word(KameaMachine._nibble_fp(nibbles[0])))
     for nib in nibbles[1:]:
-        val = _w32_dispatch(host, val, make_atom_word(m._nibble_idx(nib)))
+        val = _w32_dispatch(host, val, make_atom_word(KameaMachine._nibble_fp(nib)))
 
     tag, _, _, _ = unpack_word(val)
     if tag != TAG_W32:
@@ -463,18 +470,18 @@ def test_w32_pack8():
             errors += 1
 
     # Pack 0x00000000
-    val = _w32_dispatch(host, pack_atom, make_atom_word(m._nibble_idx(0)))
+    val = _w32_dispatch(host, pack_atom, make_atom_word(KameaMachine._nibble_fp(0)))
     for _ in range(7):
-        val = _w32_dispatch(host, val, make_atom_word(m._nibble_idx(0)))
+        val = _w32_dispatch(host, val, make_atom_word(KameaMachine._nibble_fp(0)))
     result = w32_from_word(val)
     if result != 0:
         print(f"  FAIL: W_PACK8 zeros = 0x{result:08X}, expected 0x00000000")
         errors += 1
 
     # Pack 0xFFFFFFFF
-    val = _w32_dispatch(host, pack_atom, make_atom_word(m._nibble_idx(0xF)))
+    val = _w32_dispatch(host, pack_atom, make_atom_word(KameaMachine._nibble_fp(0xF)))
     for _ in range(7):
-        val = _w32_dispatch(host, val, make_atom_word(m._nibble_idx(0xF)))
+        val = _w32_dispatch(host, val, make_atom_word(KameaMachine._nibble_fp(0xF)))
     result = w32_from_word(val)
     if result != 0xFFFFFFFF:
         print(f"  FAIL: W_PACK8 FFs = 0x{result:08X}, expected 0xFFFFFFFF")
@@ -494,8 +501,8 @@ def test_w32_lo_hi():
     test_vals = [0x12345678, 0x00000000, 0xFFFFFFFF, 0xABCD0000, 0x0000BEEF]
     for v in test_vals:
         w = make_w32_word(v)
-        lo = _w32_dispatch(host, make_atom_word(m.W_LO), w)
-        hi = _w32_dispatch(host, make_atom_word(m.W_HI), w)
+        lo = _w32_dispatch(host, make_atom_word(FP_W_LO), w)
+        hi = _w32_dispatch(host, make_atom_word(FP_W_HI), w)
 
         tag_lo, _, _, _ = unpack_word(lo)
         tag_hi, _, _, _ = unpack_word(hi)
@@ -531,10 +538,10 @@ def test_w32_merge():
     test_vals = [0x12345678, 0xABCD1234, 0x00000001, 0xFFFF0000]
     for v in test_vals:
         w = make_w32_word(v)
-        lo = _w32_dispatch(host, make_atom_word(m.W_LO), w)
-        hi = _w32_dispatch(host, make_atom_word(m.W_HI), w)
+        lo = _w32_dispatch(host, make_atom_word(FP_W_LO), w)
+        hi = _w32_dispatch(host, make_atom_word(FP_W_HI), w)
         # W_MERGE(hi)(lo) → W32
-        merge_partial = _w32_dispatch(host, make_atom_word(m.W_MERGE), hi)
+        merge_partial = _w32_dispatch(host, make_atom_word(FP_W_MERGE), hi)
         merged = _w32_dispatch(host, merge_partial, lo)
 
         tag, _, _, _ = unpack_word(merged)
@@ -561,7 +568,7 @@ def test_w32_not():
     test_vals = [0x00000000, 0xFFFFFFFF, 0x12345678, 0xAAAA5555]
     for v in test_vals:
         w = make_w32_word(v)
-        result = _w32_dispatch(host, make_atom_word(m.W_NOT), w)
+        result = _w32_dispatch(host, make_atom_word(FP_W_NOT), w)
         tag, _, _, _ = unpack_word(result)
         if tag != TAG_W32:
             print(f"  FAIL: W_NOT(0x{v:08X}) tag = {tag}")
@@ -600,7 +607,7 @@ def test_w32_arithmetic():
 
         # W_ADD
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_ADD), wa)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_ADD), wa)
         result = _w32_dispatch(host, partial, wb)
         r = w32_from_word(result)
         expected = (a + b) & M
@@ -610,7 +617,7 @@ def test_w32_arithmetic():
 
         # W_SUB
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_SUB), wa)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_SUB), wa)
         result = _w32_dispatch(host, partial, wb)
         r = w32_from_word(result)
         expected = (a - b) & M
@@ -620,11 +627,11 @@ def test_w32_arithmetic():
 
         # W_CMP
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_CMP), wa)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_CMP), wa)
         result = _w32_dispatch(host, partial, wb)
         tag, left, _, _ = unpack_word(result)
         atom_idx = left & 0x7F
-        expected_atom = m.TOP if a == b else m.BOT
+        expected_atom = FP_TOP if a == b else FP_BOT
         if tag != TAG_ATOM or atom_idx != expected_atom:
             print(f"  FAIL: W_CMP(0x{a:08X}, 0x{b:08X}) = {host.decode_word(result)}, expected {'⊤' if a == b else '⊥'}")
             errors += 1
@@ -648,9 +655,9 @@ def test_w32_bitwise():
     ]
 
     ops = [
-        (m.W_XOR, "W_XOR", lambda a, b: a ^ b),
-        (m.W_AND, "W_AND", lambda a, b: a & b),
-        (m.W_OR,  "W_OR",  lambda a, b: a | b),
+        (FP_W_XOR, "W_XOR", lambda a, b: a ^ b),
+        (FP_W_AND, "W_AND", lambda a, b: a & b),
+        (FP_W_OR,  "W_OR",  lambda a, b: a | b),
     ]
 
     for a, b in test_pairs:
@@ -692,7 +699,7 @@ def test_w32_shifts():
 
         # SHL
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_SHL), wv)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_SHL), wv)
         result = _w32_dispatch(host, partial, ws)
         r = w32_from_word(result)
         expected = (val << shift) & M
@@ -702,7 +709,7 @@ def test_w32_shifts():
 
         # SHR
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_SHR), wv)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_SHR), wv)
         result = _w32_dispatch(host, partial, ws)
         r = w32_from_word(result)
         expected = val >> shift
@@ -712,7 +719,7 @@ def test_w32_shifts():
 
         # ROTL
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_ROTL), wv)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_ROTL), wv)
         result = _w32_dispatch(host, partial, ws)
         r = w32_from_word(result)
         n = shift & 31
@@ -723,7 +730,7 @@ def test_w32_shifts():
 
         # ROTR
         total += 1
-        partial = _w32_dispatch(host, make_atom_word(m.W_ROTR), wv)
+        partial = _w32_dispatch(host, make_atom_word(FP_W_ROTR), wv)
         result = _w32_dispatch(host, partial, ws)
         r = w32_from_word(result)
         expected = ((val >> n) | (val << (32 - n))) & M if n else val
@@ -743,11 +750,11 @@ def test_w32_nib():
 
     val = 0x12345678
     w = make_w32_word(val)
-    nib_atom = make_atom_word(m.W_NIB)
+    nib_atom = make_atom_word(FP_W_NIB)
 
     for pos in range(8):
         partial = _w32_dispatch(host, nib_atom, w)
-        result = _w32_dispatch(host, partial, make_atom_word(m._nibble_idx(pos)))
+        result = _w32_dispatch(host, partial, make_atom_word(KameaMachine._nibble_fp(pos)))
         tag, left, _, _ = unpack_word(result)
         if tag != TAG_ATOM:
             print(f"  FAIL: W_NIB(0x{val:08X}, {pos}) tag = {tag}")
@@ -755,9 +762,9 @@ def test_w32_nib():
             continue
         idx = left & 0x7F
         expected_nib = (val >> (pos * 4)) & 0xF
-        expected_idx = m._nibble_idx(expected_nib)
+        expected_idx = KameaMachine._nibble_fp(expected_nib)
         if idx != expected_idx:
-            print(f"  FAIL: W_NIB(0x{val:08X}, {pos}) = N{m._nibble_val(idx):X}, expected N{expected_nib:X}")
+            print(f"  FAIL: W_NIB(0x{val:08X}, {pos}) = N{KameaMachine._nibble_val(idx):X}, expected N{expected_nib:X}")
             errors += 1
 
     total = 8
@@ -783,7 +790,7 @@ def test_mul16():
         wa = make_w16_word(a)
         wb = make_w16_word(b)
 
-        partial = _w32_dispatch(host, make_atom_word(m.MUL16), wa)
+        partial = _w32_dispatch(host, make_atom_word(FP_MUL16), wa)
         result = _w32_dispatch(host, partial, wb)
 
         # Result should be APP(W16_hi, W16_lo)
@@ -830,7 +837,7 @@ def test_mac16():
         w_b = make_w16_word(b)
 
         # MAC16(acc)(a)(b)
-        partial1 = _w32_dispatch(host, make_atom_word(m.MAC16), w_acc)
+        partial1 = _w32_dispatch(host, make_atom_word(FP_MAC16), w_acc)
         partial2 = _w32_dispatch(host, partial1, w_a)
         result = _w32_dispatch(host, partial2, w_b)
 

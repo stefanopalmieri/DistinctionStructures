@@ -3,3 +3,4 @@
 .claude/
 .venv/
 __pycache__/
+emulator/.cache/

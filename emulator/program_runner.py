@@ -42,8 +42,8 @@ def _node_to_source(node) -> str:
 class ProgramRunner:
     """Manages sequential evaluation of statements from a .ds program."""
 
-    def __init__(self):
-        self.host = EmulatorHost()
+    def __init__(self, backend: str = "rom"):
+        self.host = EmulatorHost(backend=backend)
         self.machine = self.host.machine
         self.env: dict[str, RawWord] = {}
         self.output_lines: list[str] = []

@@ -1,14 +1,29 @@
 """
-Kamea machine — clocked eval/apply state machine for the 47-atom DS algebra.
+Kamea machine — clocked eval/apply state machine for the 66-atom DS algebra.
 
 Models the hardware architecture: Cayley ROM, IC74181 ALU, SRAM heap,
 hardware stack, UART FIFOs, and a microcode-driven state machine.
+
+Atom words store structural fingerprints (not physical indices). The Cayley
+ROM is addressed and valued entirely in fingerprint space — no runtime
+translation or scanner needed.
 """
 
 from __future__ import annotations
 
 from .chips import EEPROM, IC74181, SRAM, Register, FIFO
 from . import cayley
+from .fingerprint import (
+    NUM_FP,
+    FP_N0, FP_NF, FP_TOP, FP_BOT, FP_P,
+    FP_I, FP_K, FP_QUOTE, FP_EVAL, FP_APP, FP_UNAPP,
+    FP_ALU_LOGIC, FP_ALU_ARITH, FP_ALU_ARITHC,
+    FP_ALU_ZERO, FP_ALU_COUT, FP_N_SUCC, FP_QUALE,
+    FP_IO_PUT, FP_IO_GET, FP_IO_RDY, FP_IO_SEQ,
+    FP_W_PACK8, FP_W_LO, FP_W_HI, FP_W_MERGE, FP_W_NIB,
+    FP_W_NOT, FP_MUL16, FP_MAC16,
+    FP_ALU_DISPATCH_SET, FP_W32_BINARY_OPS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +54,7 @@ META_IMMUTABLE  = 1 << 2   # quoted terms
 META_PINNED     = 1 << 3   # don't relocate (key material)
 
 # Tag constants
-TAG_ATOM      = 0x0  # left = 6-bit atom index
+TAG_ATOM      = 0x0  # left = 7-bit structural fingerprint
 TAG_QUOTED    = 0x1  # left = heap addr of inner term
 TAG_APP       = 0x2  # left = heap addr of f, right = heap addr of x
 TAG_ALUP1     = 0x3  # left = mode(2)|selector(4), right = unused
@@ -223,7 +238,13 @@ def atom_idx_from_word(word: int) -> int:
 # ---------------------------------------------------------------------------
 
 class KameaMachine:
-    """Clocked eval/apply state machine for the 47-atom DS algebra."""
+    """Clocked eval/apply state machine for the 66-atom DS algebra.
+
+    Atom words store structural fingerprints (compile-time constants),
+    not physical ROM indices. Dispatch decisions compare fingerprints
+    directly. Physical indices are only needed for Cayley ROM lookups,
+    resolved lazily via FingerprintCache on first access.
+    """
 
     ADDR_BITS   = 24   # 16M heap words (ULX3S 32MB SDRAM)
     STACK_BITS  = 16   # 64K stack entries
@@ -232,7 +253,7 @@ class KameaMachine:
     def __init__(self, cayley_rom: bytes | None = None,
                  atom_map: dict[str, int] | None = None):
         # --- Chips ---
-        rom = cayley_rom or cayley.build_cayley_rom()
+        rom = cayley_rom or cayley.build_fingerprint_rom()
         self.cayley_rom = EEPROM(13, 7, rom)
         self.alu = IC74181()
         self.heap = SRAM(self.ADDR_BITS, WORD_BITS)
@@ -249,67 +270,6 @@ class KameaMachine:
         self.uart_tx = FIFO(16)
         self.uart_rx = FIFO(16)
 
-        # --- Dispatch constants ---
-        # These map semantic roles to atom indices in this machine's ROM.
-        # Default: canonical cayley indices. Override for scrambled ROMs.
-        am = atom_map or {}
-        self.TOP       = am.get("⊤", cayley.TOP)
-        self.BOT       = am.get("⊥", cayley.BOT)
-        self.P         = am.get("p", cayley.P)
-        self.QUOTE     = am.get("QUOTE", cayley.QUOTE)
-        self.EVAL      = am.get("EVAL", cayley.EVAL)
-        self.APP       = am.get("APP", cayley.APP)
-        self.UNAPP     = am.get("UNAPP", cayley.UNAPP)
-        self.ALU_LOGIC = am.get("ALU_LOGIC", cayley.ALU_LOGIC)
-        self.ALU_ARITH = am.get("ALU_ARITH", cayley.ALU_ARITH)
-        self.ALU_ARITHC = am.get("ALU_ARITHC", cayley.ALU_ARITHC)
-        self.ALU_ZERO  = am.get("ALU_ZERO", cayley.ALU_ZERO)
-        self.ALU_COUT  = am.get("ALU_COUT", cayley.ALU_COUT)
-        self.N_SUCC    = am.get("N_SUCC", cayley.N_SUCC)
-        self.IO_PUT    = am.get("IO_PUT", cayley.IO_PUT)
-        self.IO_GET    = am.get("IO_GET", cayley.IO_GET)
-        self.IO_RDY    = am.get("IO_RDY", cayley.IO_RDY)
-        self.IO_SEQ    = am.get("IO_SEQ", cayley.IO_SEQ)
-        self.N0        = am.get("N0", cayley.N0)
-        self.NF        = am.get("NF", cayley.NF)
-        # Build nibble set and val/idx tables for scrambled ROM support
-        self._nibble_set = frozenset(
-            am.get(f"N{i:X}", cayley.NIBBLE_BASE + i) for i in range(16)
-        )
-        self._nibble_to_val = {
-            am.get(f"N{i:X}", cayley.NIBBLE_BASE + i): i for i in range(16)
-        }
-        self._val_to_nibble = {v: k for k, v in self._nibble_to_val.items()}
-        self.ALU_DISPATCH_SET = frozenset({self.ALU_LOGIC, self.ALU_ARITH, self.ALU_ARITHC})
-
-        # W32/MUL dispatch constants
-        self.W_PACK8 = am.get("W_PACK8", cayley.W_PACK8)
-        self.W_LO    = am.get("W_LO", cayley.W_LO)
-        self.W_HI    = am.get("W_HI", cayley.W_HI)
-        self.W_MERGE = am.get("W_MERGE", cayley.W_MERGE)
-        self.W_NIB   = am.get("W_NIB", cayley.W_NIB)
-        self.W_ADD   = am.get("W_ADD", cayley.W_ADD)
-        self.W_SUB   = am.get("W_SUB", cayley.W_SUB)
-        self.W_CMP   = am.get("W_CMP", cayley.W_CMP)
-        self.W_XOR   = am.get("W_XOR", cayley.W_XOR)
-        self.W_AND   = am.get("W_AND", cayley.W_AND)
-        self.W_OR    = am.get("W_OR", cayley.W_OR)
-        self.W_NOT   = am.get("W_NOT", cayley.W_NOT)
-        self.W_SHL   = am.get("W_SHL", cayley.W_SHL)
-        self.W_SHR   = am.get("W_SHR", cayley.W_SHR)
-        self.W_ROTL  = am.get("W_ROTL", cayley.W_ROTL)
-        self.W_ROTR  = am.get("W_ROTR", cayley.W_ROTR)
-        self.MUL16   = am.get("MUL16", cayley.MUL16)
-        self.MAC16   = am.get("MAC16", cayley.MAC16)
-        self.QUALE   = am.get("QUALE", cayley.QUALE)
-
-        self.W32_BINARY_OPS = {
-            self.W_ADD: W32_OP_ADD, self.W_SUB: W32_OP_SUB, self.W_CMP: W32_OP_CMP,
-            self.W_XOR: W32_OP_XOR, self.W_AND: W32_OP_AND, self.W_OR: W32_OP_OR,
-            self.W_SHL: W32_OP_SHL, self.W_SHR: W32_OP_SHR,
-            self.W_ROTL: W32_OP_ROTL, self.W_ROTR: W32_OP_ROTR,
-        }
-
         # --- Internal latches ---
         self._current_word = 0
         self._io_op: str = ""
@@ -324,17 +284,25 @@ class KameaMachine:
         self.stack_peak = 0
 
     # -------------------------------------------------------------------
-    # Nibble helpers (use instance constants for scrambled ROM support)
+    # Fingerprint-based nibble helpers
+    # Nibble fingerprints 0x00-0x0F equal nibble values 0-15.
     # -------------------------------------------------------------------
 
-    def _is_nibble(self, idx: int) -> bool:
-        return idx in self._nibble_set
+    @staticmethod
+    def _is_nibble(fp: int) -> bool:
+        return 0x00 <= fp <= 0x0F
 
-    def _nibble_val(self, idx: int) -> int:
-        return self._nibble_to_val[idx]
+    @staticmethod
+    def _nibble_val(fp: int) -> int:
+        return fp
 
-    def _nibble_idx(self, val: int) -> int:
-        return self._val_to_nibble[val & 0xF]
+    @staticmethod
+    def _nibble_fp(val: int) -> int:
+        return val & 0xF
+
+    # -------------------------------------------------------------------
+    # Cache management
+    # -------------------------------------------------------------------
 
     # -------------------------------------------------------------------
     # Memory helpers
@@ -415,12 +383,14 @@ class KameaMachine:
             self._dispatch_apply(f_word, x_word)
 
         elif s == S_DOT:
-            # Cayley ROM lookup — indices packed via pack_word(0, fi, xi)
-            _, x_idx, y_idx, _ = unpack_word(self.result.value)
-            addr = x_idx * cayley.NUM_ATOMS + y_idx
-            result_idx = self.cayley_rom.read(addr)
+            # Cayley ROM lookup — fingerprints address the ROM directly
+            _, f_fp, x_fp, _ = unpack_word(self.result.value)
+            f_fp &= 0x7F
+            x_fp &= 0x7F
+            addr = f_fp * NUM_FP + x_fp
+            result_fp = self.cayley_rom.read(addr)
             self.rom_reads += 1
-            self.result.load(make_atom_word(result_idx))
+            self.result.load(make_atom_word(result_fp))
             self.state.load(S_RETURN)
 
         elif s == S_ALU:
@@ -451,115 +421,102 @@ class KameaMachine:
         self.state.load(S_RETURN)
 
     def _return_p(self):
-        """Return atom p."""
-        self.result.load(make_atom_word(self.P))
+        """Return atom p (fingerprint constant)."""
+        self.result.load(make_atom_word(FP_P))
         self.state.load(S_RETURN)
 
     # -------------------------------------------------------------------
-    # Dispatch logic
+    # Dispatch logic (all comparisons use fingerprint constants)
     # -------------------------------------------------------------------
 
     def _dispatch_apply(self, f_word: int, x_word: int):
-        """Route f(x) to the correct handler based on f's tag and atom."""
+        """Route f(x) to the correct handler based on f's tag and fingerprint."""
         f_tag, f_left, f_right, _f_meta = unpack_word(f_word)
         x_tag, x_left, x_right, _x_meta = unpack_word(x_word)
 
         if f_tag == TAG_ATOM:
-            f_atom = f_left & 0x7F
-            self._dispatch_atom_apply(f_atom, f_word, x_word, x_tag, x_left, x_right)
+            f_fp = f_left & 0x7F
+            self._dispatch_atom_apply(f_fp, f_word, x_word, x_tag, x_left, x_right)
 
         elif f_tag == TAG_PARTIAL:
-            # Partial(f_addr) + x → AppNode(f_addr, x_addr)
-            # Store x on heap, then make app node
             x_addr = self.alloc(x_word)
             result = make_app_word(f_left, x_addr)
             self._return_value(result)
 
         elif f_tag == TAG_BUNDLE:
-            # Bundle(f_addr, x_addr) applied to ⊤ or ⊥
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if x_atom == self.TOP:
+                x_fp = x_left & 0x7F
+                if x_fp == FP_TOP:
                     self.result.load(self.heap_read(f_left))
                     self.state.load(S_RETURN)
                     return
-                elif x_atom == self.BOT:
+                elif x_fp == FP_BOT:
                     self.result.load(self.heap_read(f_right))
                     self.state.load(S_RETURN)
                     return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
 
         elif f_tag == TAG_ALUP1:
-            # ALUPartial1(mode, sel) + nibble → ALUPartial2(mode, sel, A)
             mode = (f_left >> 4) & 0x3
             sel = f_left & 0xF
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    a_val = self._nibble_val(x_atom)
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    a_val = self._nibble_val(x_fp)
                     result = make_alup2_word(mode, sel, a_val)
                     self._return_value(result)
                     return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
 
         elif f_tag == TAG_ALUP2:
-            # ALUPartial2(mode, sel, A) + nibble → fire 74181
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
                     mode = (f_left >> 4) & 0x3
                     sel = f_left & 0xF
                     a_val = f_right & 0xF
-                    b_val = self._nibble_val(x_atom)
+                    b_val = self._nibble_val(x_fp)
                     self._fire_alu(mode, sel, a_val, b_val)
                     return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
 
         elif f_tag == TAG_IOPUTP:
-            # IOPutPartial(hi) + nibble → UART TX byte
             hi = f_left & 0xF
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    lo = self._nibble_val(x_atom)
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    lo = self._nibble_val(x_fp)
                     self.uart_tx.push((hi << 4) | lo)
                     self.io_ops += 1
-                    self.result.load(make_atom_word(self.TOP))
+                    self.result.load(make_atom_word(FP_TOP))
                     self.state.load(S_RETURN)
                     return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
 
         elif f_tag == TAG_IOSEQP:
-            # IOSeqPartial(first) + anything → return x (discard first)
             self.result.load(x_word)
             self.state.load(S_RETURN)
 
         elif f_tag == TAG_COUT_PROBE:
-            # CoutProbe(mode, sel, A) + nibble → fire 74181, return carry
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
                     mode = (f_left >> 4) & 0x3
                     sel = f_left & 0xF
                     a_val = f_right & 0xF
-                    b_val = self._nibble_val(x_atom)
+                    b_val = self._nibble_val(x_fp)
                     self._fire_alu_carry(mode, sel, a_val, b_val)
                     return
             self._return_p()
 
         elif f_tag == TAG_W32_OP1:
-            # W32 binary op partial(opcode, a_addr) + W32 → compute result
             if x_tag == TAG_W32:
                 opcode = f_left & 0xFF
                 a_word = self.heap_read(f_right)
                 a_val = w32_from_word(a_word)
                 b_val = w32_from_word(x_word)
                 if opcode == W32_OP_CMP:
-                    r = self.TOP if a_val == b_val else self.BOT
+                    r = FP_TOP if a_val == b_val else FP_BOT
                     self._return_value(make_atom_word(r))
                 else:
                     self._return_value(make_w32_word(self._compute_w32(opcode, a_val, b_val)))
@@ -567,12 +524,11 @@ class KameaMachine:
             self._return_p()
 
         elif f_tag == TAG_WPACK:
-            # WPACK(acc, count) + nibble → accumulate or produce W32
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
                     acc, count = wpack_unpack(f_word)
-                    nv = self._nibble_val(x_atom)
+                    nv = self._nibble_val(x_fp)
                     new_val = (acc << 4) | nv
                     if count == 7:
                         self._return_value(make_w32_word(new_val & 0xFFFFFFFF))
@@ -584,7 +540,6 @@ class KameaMachine:
         elif f_tag == TAG_MUL_OP1:
             sub_op = f_left & 0xFF
             if sub_op == MUL_OP_MUL16:
-                # MUL16 partial(a_addr) + W16 → fire multiply
                 if x_tag == TAG_W16:
                     a_word = self.heap_read(f_right)
                     a_val = w16_from_word(a_word)
@@ -592,20 +547,15 @@ class KameaMachine:
                     product = a_val * b_val
                     hi = (product >> 16) & 0xFFFF
                     lo = product & 0xFFFF
-                    hi_word = make_w16_word(hi)
-                    lo_word = make_w16_word(lo)
-                    hi_addr = self.alloc(hi_word)
-                    lo_addr = self.alloc(lo_word)
+                    hi_addr = self.alloc(make_w16_word(hi))
+                    lo_addr = self.alloc(make_w16_word(lo))
                     self._return_value(make_app_word(hi_addr, lo_addr))
                     return
                 self._return_p()
             elif sub_op == MUL_OP_MAC1:
-                # MAC16 stage 1: acc partial(acc_addr) + W16(a) → ExtendedPartial(MAC2, app_addr)
                 if x_tag == TAG_W16:
-                    # Store APP(acc, a) on heap
-                    a_word = x_word
-                    a_addr = self.alloc(a_word)
-                    app_word = make_app_word(f_right, a_addr)  # f_right = acc_addr
+                    a_addr = self.alloc(x_word)
+                    app_word = make_app_word(f_right, a_addr)
                     app_addr = self.alloc(app_word)
                     self._return_value(make_extended_word(EXT_MAC2, app_addr))
                     return
@@ -616,7 +566,6 @@ class KameaMachine:
         elif f_tag == TAG_EXTENDED:
             sub_type = (f_left >> 20) & 0xF
             if sub_type == EXT_MAC2:
-                # MAC16 stage 2: partial(app_addr) + W16(b) → acc + a*b
                 if x_tag == TAG_W16:
                     app_word = self.heap_read(f_right)
                     _, app_left, app_right, _ = unpack_word(app_word)
@@ -628,15 +577,12 @@ class KameaMachine:
                     result = acc_val + a_val * b_val
                     hi = (result >> 16) & 0xFFFF
                     lo = result & 0xFFFF
-                    hi_word = make_w16_word(hi)
-                    lo_word = make_w16_word(lo)
-                    hi_addr = self.alloc(hi_word)
-                    lo_addr = self.alloc(lo_word)
+                    hi_addr = self.alloc(make_w16_word(hi))
+                    lo_addr = self.alloc(make_w16_word(lo))
                     self._return_value(make_app_word(hi_addr, lo_addr))
                     return
                 self._return_p()
             elif sub_type == EXT_MERGE:
-                # W_MERGE partial(hi_addr) + W16(lo) → W32(hi<<16 | lo)
                 if x_tag == TAG_W16:
                     hi_word = self.heap_read(f_right)
                     hi_val = w16_from_word(hi_word)
@@ -645,57 +591,51 @@ class KameaMachine:
                     return
                 self._return_p()
             elif sub_type == EXT_NIB:
-                # W_NIB partial(w32_addr) + nibble → extract nibble at position
                 if x_tag == TAG_ATOM:
-                    x_atom = x_left & 0x7F
-                    if self._is_nibble(x_atom):
-                        pos = self._nibble_val(x_atom)
+                    x_fp = x_left & 0x7F
+                    if self._is_nibble(x_fp):
+                        pos = self._nibble_val(x_fp)
                         w32_word = self.heap_read(f_right)
                         val = w32_from_word(w32_word)
                         nib = (val >> (pos * 4)) & 0xF
-                        self._return_value(make_atom_word(self._nibble_idx(nib)))
+                        self._return_value(make_atom_word(self._nibble_fp(nib)))
                         return
                 self._return_p()
             else:
                 self._return_p()
 
         else:
-            # Unknown tag in function position → p
             self._return_p()
 
-    def _dispatch_atom_apply(self, f_atom: int, f_word: int,
+    def _dispatch_atom_apply(self, f_fp: int, f_word: int,
                               x_word: int, x_tag: int,
                               x_left: int, x_right: int):
-        """Handle atom(f) applied to x."""
+        """Handle atom(f) applied to x. All comparisons use fingerprint constants."""
 
         # --- QUALE intercept: any atom applied to QUALE uses Cayley ROM ---
-        if x_tag == TAG_ATOM and (x_left & 0x7F) == self.QUALE:
-            self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+        if x_tag == TAG_ATOM and (x_left & 0x7F) == FP_QUALE:
+            self._cayley_or_default(f_fp, x_word, x_tag, x_left)
             return
 
         # --- QUALE row: QUALE applied to anything returns Cayley result ---
-        if f_atom == self.QUALE:
-            self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+        if f_fp == FP_QUALE:
+            self._cayley_or_default(f_fp, x_word, x_tag, x_left)
             return
 
         # --- QUOTE ---
-        if f_atom == self.QUOTE:
-            # Store x_word on heap, wrap address as quoted
+        if f_fp == FP_QUOTE:
             x_addr = self.alloc(x_word)
             result = make_quoted_word(x_addr)
             self._return_value(result)
             return
 
         # --- EVAL ---
-        if f_atom == self.EVAL:
+        if f_fp == FP_EVAL:
             if x_tag == TAG_QUOTED:
-                # EVAL(quoted(addr)) → evaluate inner term
                 self.tp.load(x_left)
                 self.state.load(S_FETCH)
                 return
             elif x_tag == TAG_APP:
-                # EVAL(app-node(f,x)) → flat eval: dot(f_atom, x_atom)
-                # Load f and x from heap, do Cayley lookup
                 f_inner = self.heap_read(x_left)
                 x_inner = self.heap_read(x_right)
                 f_inner_tag = (f_inner >> TAG_SHIFT) & TAG_MASK
@@ -706,74 +646,66 @@ class KameaMachine:
                     self.result.load(pack_word(0, fi, xi))
                     self.state.load(S_DOT)
                     return
-                self.result.load(make_atom_word(self.P))
-                self.state.load(S_RETURN)
+                self._return_p()
                 return
-            # EVAL of anything else → p
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
             return
 
         # --- APP ---
-        if f_atom == self.APP:
-            # Store x_word on heap, return partial
+        if f_fp == FP_APP:
             x_addr = self.alloc(x_word)
             result = make_partial_word(x_addr)
             self._return_value(result)
             return
 
         # --- UNAPP ---
-        if f_atom == self.UNAPP:
+        if f_fp == FP_UNAPP:
             if x_tag == TAG_APP:
-                # UNAPP(app-node) → bundle
                 result = make_bundle_word(x_left, x_right)
                 self._return_value(result)
                 return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
             return
 
         # --- ALU dispatch ---
-        if f_atom in self.ALU_DISPATCH_SET:
+        if f_fp in FP_ALU_DISPATCH_SET:
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    if f_atom == self.ALU_LOGIC:
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    if f_fp == FP_ALU_LOGIC:
                         mode = MODE_LOGIC
-                    elif f_atom == self.ALU_ARITH:
+                    elif f_fp == FP_ALU_ARITH:
                         mode = MODE_ARITH
                     else:
                         mode = MODE_ARITHC
-                    sel = self._nibble_val(x_atom)
+                    sel = self._nibble_val(x_fp)
                     result = make_alup1_word(mode, sel)
                     self._return_value(result)
                     return
-            # Non-nibble → Cayley fallback
-            self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+            self._cayley_or_default(f_fp, x_word, x_tag, x_left)
             return
 
         # --- ALU_ZERO ---
-        if f_atom == self.ALU_ZERO:
+        if f_fp == FP_ALU_ZERO:
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    r = self.TOP if x_atom == self.N0 else self.BOT
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    r = FP_TOP if x_fp == FP_N0 else FP_BOT
                     self.result.load(make_atom_word(r))
                     self.state.load(S_RETURN)
                     return
-            self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+            self._cayley_or_default(f_fp, x_word, x_tag, x_left)
             return
 
         # --- ALU_COUT ---
-        if f_atom == self.ALU_COUT:
+        if f_fp == FP_ALU_COUT:
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    r = self.TOP if self._nibble_val(x_atom) >= 8 else self.BOT
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    r = FP_TOP if self._nibble_val(x_fp) >= 8 else FP_BOT
                     self.result.load(make_atom_word(r))
                     self.state.load(S_RETURN)
                     return
-            # ALU_COUT on ALUPartial2 → CoutProbe
             if x_tag == TAG_ALUP2:
                 mode = (x_left >> 4) & 0x3
                 sel = x_left & 0xF
@@ -781,64 +713,61 @@ class KameaMachine:
                 result = make_cout_probe_word(mode, sel, a_val)
                 self._return_value(result)
                 return
-            self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+            self._cayley_or_default(f_fp, x_word, x_tag, x_left)
             return
 
         # --- IO_PUT ---
-        if f_atom == self.IO_PUT:
+        if f_fp == FP_IO_PUT:
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    hi = self._nibble_val(x_atom)
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    hi = self._nibble_val(x_fp)
                     result = make_ioputp_word(hi)
                     self._return_value(result)
                     return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
             return
 
         # --- IO_GET ---
-        if f_atom == self.IO_GET:
-            if x_tag == TAG_ATOM and (x_left & 0x7F) == self.TOP:
+        if f_fp == FP_IO_GET:
+            if x_tag == TAG_ATOM and (x_left & 0x7F) == FP_TOP:
                 self._io_op = "get"
                 self.state.load(S_IO)
                 return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
             return
 
         # --- IO_RDY ---
-        if f_atom == self.IO_RDY:
-            if x_tag == TAG_ATOM and (x_left & 0x7F) == self.TOP:
-                r = self.TOP if self.uart_rx.ready() else self.BOT
+        if f_fp == FP_IO_RDY:
+            if x_tag == TAG_ATOM and (x_left & 0x7F) == FP_TOP:
+                r = FP_TOP if self.uart_rx.ready() else FP_BOT
                 self.result.load(make_atom_word(r))
                 self.io_ops += 1
                 self.state.load(S_RETURN)
                 return
-            self.result.load(make_atom_word(self.P))
-            self.state.load(S_RETURN)
+            self._return_p()
             return
 
         # --- IO_SEQ ---
-        if f_atom == self.IO_SEQ:
+        if f_fp == FP_IO_SEQ:
             x_addr = self.alloc(x_word)
             result = make_ioseqp_word(x_addr)
             self._return_value(result)
             return
 
-        # --- W_PACK8: nibble → WPACK(val, 1) ---
-        if f_atom == self.W_PACK8:
+        # --- W_PACK8 ---
+        if f_fp == FP_W_PACK8:
             if x_tag == TAG_ATOM:
-                x_atom = x_left & 0x7F
-                if self._is_nibble(x_atom):
-                    nv = self._nibble_val(x_atom)
+                x_fp = x_left & 0x7F
+                if self._is_nibble(x_fp):
+                    nv = self._nibble_val(x_fp)
                     self._return_value(make_wpack_word(nv, 1))
                     return
             self._return_p()
             return
 
-        # --- W_LO: W32 → W16(lo16) ---
-        if f_atom == self.W_LO:
+        # --- W_LO ---
+        if f_fp == FP_W_LO:
             if x_tag == TAG_W32:
                 lo = x_right & 0xFFFF
                 self._return_value(make_w16_word(lo))
@@ -846,8 +775,8 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- W_HI: W32 → W16(hi16) ---
-        if f_atom == self.W_HI:
+        # --- W_HI ---
+        if f_fp == FP_W_HI:
             if x_tag == TAG_W32:
                 hi = x_left & 0xFFFF
                 self._return_value(make_w16_word(hi))
@@ -855,8 +784,8 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- W_NOT: W32 → W32(~val) ---
-        if f_atom == self.W_NOT:
+        # --- W_NOT ---
+        if f_fp == FP_W_NOT:
             if x_tag == TAG_W32:
                 val = w32_from_word(x_word)
                 self._return_value(make_w32_word((~val) & 0xFFFFFFFF))
@@ -864,8 +793,8 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- W_MERGE: W16 → ExtendedPartial(MERGE, hi_addr) ---
-        if f_atom == self.W_MERGE:
+        # --- W_MERGE ---
+        if f_fp == FP_W_MERGE:
             if x_tag == TAG_W16:
                 addr = self.alloc(x_word)
                 self._return_value(make_extended_word(EXT_MERGE, addr))
@@ -873,8 +802,8 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- W_NIB: W32 → ExtendedPartial(NIB, w32_addr) ---
-        if f_atom == self.W_NIB:
+        # --- W_NIB ---
+        if f_fp == FP_W_NIB:
             if x_tag == TAG_W32:
                 addr = self.alloc(x_word)
                 self._return_value(make_extended_word(EXT_NIB, addr))
@@ -882,18 +811,18 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- Binary W32 ops: W32 → W32_OP1(opcode, a_addr) ---
-        if f_atom in self.W32_BINARY_OPS:
+        # --- Binary W32 ops ---
+        if f_fp in FP_W32_BINARY_OPS:
             if x_tag == TAG_W32:
-                opcode = self.W32_BINARY_OPS[f_atom]
+                opcode = FP_W32_BINARY_OPS[f_fp]
                 addr = self.alloc(x_word)
                 self._return_value(make_w32_op1_word(opcode, addr))
                 return
             self._return_p()
             return
 
-        # --- MUL16: W16 → MulOp1(MUL16, a_addr) ---
-        if f_atom == self.MUL16:
+        # --- MUL16 ---
+        if f_fp == FP_MUL16:
             if x_tag == TAG_W16:
                 addr = self.alloc(x_word)
                 self._return_value(make_mul_op1_word(MUL_OP_MUL16, addr))
@@ -901,8 +830,8 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- MAC16: W16 → MulOp1(MAC1, acc_addr) ---
-        if f_atom == self.MAC16:
+        # --- MAC16 ---
+        if f_fp == FP_MAC16:
             if x_tag == TAG_W16:
                 addr = self.alloc(x_word)
                 self._return_value(make_mul_op1_word(MUL_OP_MAC1, addr))
@@ -910,21 +839,20 @@ class KameaMachine:
             self._return_p()
             return
 
-        # --- Default: atom applied to something ---
-        self._cayley_or_default(f_atom, x_word, x_tag, x_left)
+        # --- Default: atom applied to something → Cayley or p ---
+        self._cayley_or_default(f_fp, x_word, x_tag, x_left)
 
-    def _cayley_or_default(self, f_atom: int, x_word: int,
+    def _cayley_or_default(self, f_fp: int, x_word: int,
                             x_tag: int, x_left: int):
-        """Atom × Atom → Cayley lookup, Atom × structured → p."""
+        """Atom x Atom -> Cayley lookup (direct fingerprint ROM), Atom x structured -> p."""
         if x_tag == TAG_ATOM:
-            x_atom = x_left & 0x7F
-            addr = f_atom * cayley.NUM_ATOMS + x_atom
-            result_idx = self.cayley_rom.read(addr)
+            x_fp = x_left & 0x7F
+            addr = f_fp * NUM_FP + x_fp
+            result_fp = self.cayley_rom.read(addr)
             self.rom_reads += 1
-            self.result.load(make_atom_word(result_idx))
+            self.result.load(make_atom_word(result_fp))
         else:
-            # Atom applied to non-atom structured value → p
-            self.result.load(make_atom_word(self.P))
+            self.result.load(make_atom_word(FP_P))
         self.state.load(S_RETURN)
 
     # -------------------------------------------------------------------
@@ -932,23 +860,22 @@ class KameaMachine:
     # -------------------------------------------------------------------
 
     def _fire_alu(self, mode: int, sel: int, a_val: int, b_val: int):
-        """Fire the IC74181 and return result nibble."""
-        m = (mode == MODE_LOGIC)
-        cn = (mode != MODE_ARITHC)  # active-low: arithc has carry
-        f_result, cn4, a_eq_b = self.alu(a_val, b_val, sel, m, cn)
-        self.alu_ops += 1
-        self.result.load(make_atom_word(self._nibble_idx(f_result)))
-        self.state.load(S_RETURN)
-
-    def _fire_alu_carry(self, mode: int, sel: int, a_val: int, b_val: int):
-        """Fire the IC74181 and return carry-out as boolean."""
+        """Fire the IC74181 and return result nibble (as fingerprint)."""
         m = (mode == MODE_LOGIC)
         cn = (mode != MODE_ARITHC)
         f_result, cn4, a_eq_b = self.alu(a_val, b_val, sel, m, cn)
         self.alu_ops += 1
-        # cn4 is active-low: False means carry out occurred
+        self.result.load(make_atom_word(self._nibble_fp(f_result)))
+        self.state.load(S_RETURN)
+
+    def _fire_alu_carry(self, mode: int, sel: int, a_val: int, b_val: int):
+        """Fire the IC74181 and return carry-out as boolean fingerprint."""
+        m = (mode == MODE_LOGIC)
+        cn = (mode != MODE_ARITHC)
+        f_result, cn4, a_eq_b = self.alu(a_val, b_val, sel, m, cn)
+        self.alu_ops += 1
         carry = not cn4
-        self.result.load(make_atom_word(self.TOP if carry else self.BOT))
+        self.result.load(make_atom_word(FP_TOP if carry else FP_BOT))
         self.state.load(S_RETURN)
 
     # -------------------------------------------------------------------
@@ -982,15 +909,13 @@ class KameaMachine:
         if self._io_op == "get":
             byte = self.uart_rx.pop()
             if byte is None:
-                # No data available — return p (matches algebraic semantics)
-                self.result.load(make_atom_word(self.P))
+                self.result.load(make_atom_word(FP_P))
                 self.state.load(S_RETURN)
                 return
             hi = (byte >> 4) & 0xF
             lo = byte & 0xF
-            # Allocate two atom words for nibbles, then an app-node
-            hi_word = make_atom_word(self._nibble_idx(hi))
-            lo_word = make_atom_word(self._nibble_idx(lo))
+            hi_word = make_atom_word(self._nibble_fp(hi))
+            lo_word = make_atom_word(self._nibble_fp(lo))
             hi_addr = self.alloc(hi_word)
             lo_addr = self.alloc(lo_word)
             result = make_app_word(hi_addr, lo_addr)

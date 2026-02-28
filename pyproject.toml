@@ -14,3 +14,8 @@ dependencies = [
     "textual>=8.0.0",
     "rich>=14.3.3",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

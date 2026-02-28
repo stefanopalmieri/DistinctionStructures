@@ -2,11 +2,13 @@
 EmulatorHost — high-level interface to the Kamea machine.
 
 Provides term loading (S-expression → heap), evaluation, and result decoding.
+Programs use structural fingerprints, making them permutation-invariant.
 """
 
 from __future__ import annotations
 
 from . import cayley
+from .fingerprint import NAME_TO_FP, FP_TO_NAME, NUM_FP
 from .scanner import CayleyScanner
 from .machine import (
     KameaMachine, S_FETCH, S_APPLY, S_DONE, S_HALTED,
@@ -25,14 +27,81 @@ from .machine import (
 
 
 class EmulatorHost:
-    """High-level interface to the Kamea machine."""
+    """High-level interface to the Kamea machine.
+
+    Args:
+        cayley_rom: Optional ROM bytes. Defaults to canonical fingerprint ROM.
+        atom_map: Optional atom name→index mapping (legacy).
+        backend: "rom" (default) or "neural". When "neural", uses a 6-hidden-dim
+            MLP trained on the Cayley table instead of ROM lookup for dot.
+        neural_table: Pre-trained NeuralCayleyTable to use. If None and
+            backend="neural", trains a fresh one automatically.
+    """
 
     def __init__(self, cayley_rom: bytes | None = None,
-                 atom_map: dict[str, int] | None = None):
-        self.machine = KameaMachine(cayley_rom, atom_map)
+                 atom_map: dict[str, int] | None = None,
+                 backend: str = "rom",
+                 neural_table: "NeuralCayleyTable | None" = None):
+        if backend == "neural":
+            import sys
+            from pathlib import Path
+            from .neural_dot import NeuralCayleyTable
+            from .neural_machine import NeuralKameaMachine
+            if neural_table is None:
+                cache_dir = Path(__file__).parent / ".cache"
+                cache_path = cache_dir / "cayley_mlp.pt"
+                if cache_path.exists():
+                    print("Loading cached neural Cayley table...",
+                          file=sys.stderr, flush=True)
+                    neural_table = NeuralCayleyTable.load(cache_path, device="cpu")
+                    acc, correct, total = neural_table.accuracy()
+                    if correct == total:
+                        print(f"Loaded ({neural_table.parameter_count()} params, "
+                              f"{correct}/{total} accuracy)",
+                              file=sys.stderr, flush=True)
+                    else:
+                        print(f"Cached model stale ({correct}/{total}), retraining...",
+                              file=sys.stderr, flush=True)
+                        neural_table = None
+                if neural_table is None:
+                    # dim=6 is at the capacity edge; retry up to 5 times
+                    for attempt in range(5):
+                        print(f"Training neural Cayley table (dim=6, attempt {attempt + 1}/5)...",
+                              file=sys.stderr, flush=True)
+                        neural_table = NeuralCayleyTable(hidden_dim=6, device="cpu")
+                        stats = neural_table.train(
+                            epochs=20000, lr=1e-3, target_accuracy=1.0,
+                        )
+                        if stats["final_accuracy"] >= 1.0:
+                            print(f"Trained in {stats['epochs']} epochs "
+                                  f"({stats['training_time']:.1f}s), "
+                                  f"{neural_table.parameter_count()} params",
+                                  file=sys.stderr, flush=True)
+                            break
+                    else:
+                        # Fall back to dim=8 which reliably converges
+                        print("Falling back to dim=8...",
+                              file=sys.stderr, flush=True)
+                        neural_table = NeuralCayleyTable(hidden_dim=8, device="cpu")
+                        stats = neural_table.train(
+                            epochs=20000, lr=1e-3, target_accuracy=1.0,
+                        )
+                        print(f"Trained in {stats['epochs']} epochs "
+                              f"({stats['training_time']:.1f}s), "
+                              f"{neural_table.parameter_count()} params",
+                              file=sys.stderr, flush=True)
+                    # Cache for next time
+                    cache_dir.mkdir(exist_ok=True)
+                    neural_table.save(cache_path)
+            self.machine = NeuralKameaMachine(neural_table, cayley_rom, atom_map)
+            self.neural_table = neural_table
+        else:
+            self.machine = KameaMachine(cayley_rom, atom_map)
+            self.neural_table = None
+        self.backend = backend
 
     # -------------------------------------------------------------------
-    # Term loading: nested tuples/strings → heap words
+    # Term loading: nested tuples/strings → heap words (fingerprint-based)
     # -------------------------------------------------------------------
 
     def load_term(self, term) -> int:
@@ -40,14 +109,14 @@ class EmulatorHost:
         Load a term into the machine's heap, return root address.
 
         Term format:
-          - str: atom name (e.g. "⊤", "N0", "QUOTE")
-          - int: atom index directly
+          - str: atom name (e.g. "⊤", "N0", "QUOTE") → fingerprint atom word
+          - int: fingerprint ordinal directly
           - (f, x): application (f applied to x)
           - ("QUOTED", inner): quoted term
         """
         if isinstance(term, str):
-            idx = cayley.NAME_TO_IDX[term]
-            word = make_atom_word(idx)
+            fp = NAME_TO_FP[term]
+            word = make_atom_word(fp)
             return self.machine.alloc(word)
 
         if isinstance(term, int):
@@ -115,19 +184,17 @@ class EmulatorHost:
 
     def dot(self, x_name: str, y_name: str) -> str:
         """Single Cayley ROM lookup by atom name."""
-        xi = cayley.NAME_TO_IDX[x_name]
-        yi = cayley.NAME_TO_IDX[y_name]
-        addr = xi * cayley.NUM_ATOMS + yi
-        ri = self.machine.cayley_rom.read(addr)
+        x_fp = NAME_TO_FP[x_name]
+        y_fp = NAME_TO_FP[y_name]
+        r_fp = self.machine.cayley_rom.read(x_fp * NUM_FP + y_fp)
         self.machine.rom_reads += 1
-        return cayley.IDX_TO_NAME[ri]
+        return FP_TO_NAME[r_fp]
 
-    def dot_idx(self, xi: int, yi: int) -> int:
-        """Single Cayley ROM lookup by atom index."""
-        addr = xi * cayley.NUM_ATOMS + yi
-        ri = self.machine.cayley_rom.read(addr)
+    def dot_idx(self, x_fp: int, y_fp: int) -> int:
+        """Single Cayley ROM lookup by fingerprint. Returns result fingerprint."""
+        r_fp = self.machine.cayley_rom.read(x_fp * NUM_FP + y_fp)
         self.machine.rom_reads += 1
-        return ri
+        return r_fp
 
     # -------------------------------------------------------------------
     # Hardware scanner (boot-time recovery)
@@ -158,7 +225,7 @@ class EmulatorHost:
         return bytes(out)
 
     # -------------------------------------------------------------------
-    # Result decoding
+    # Result decoding (fingerprint-based)
     # -------------------------------------------------------------------
 
     def decode_word(self, word: int, depth: int = 0) -> str:
@@ -169,10 +236,11 @@ class EmulatorHost:
         tag, left, right, _meta = unpack_word(word)
 
         if tag == TAG_ATOM:
-            idx = left & 0x7F
-            if 0 <= idx < cayley.NUM_ATOMS:
-                return cayley.IDX_TO_NAME[idx]
-            return f"?atom({idx})"
+            fp = left & 0x7F
+            name = FP_TO_NAME.get(fp)
+            if name is not None:
+                return name
+            return f"?fp({fp})"
 
         if tag == TAG_QUOTED:
             inner = self.machine.heap_read(left)
@@ -286,7 +354,7 @@ if __name__ == "__main__":
     print(f"(N3 N5) = {r['result']}  [{r['stats']['cycles']} cycles]")
 
     # Test: QUOTE/EVAL roundtrip
-    r = host.eval(("EVAL", ("QUOTE", "N7")))
+    r = host.eval(("EVAL", ("QUOTED", "N7")))
     print(f"(EVAL (QUOTE N7)) = {r['result']}  [{r['stats']['cycles']} cycles]")
 
     # Test: APP/UNAPP roundtrip
