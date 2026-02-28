@@ -30,7 +30,7 @@ All Lean proofs compile with **zero `sorry`** on Lean 4.28.0 / Mathlib v4.28.0.
 
 **Extension 4 (W32 + MUL).** 18 additional atoms for 32-bit wide arithmetic (W_ADD, W_SUB, W_CMP, W_XOR, W_AND, W_OR, W_NOT, W_SHL, W_SHR, W_ROTL, W_ROTR, W_PACK8, W_LO, W_HI, W_MERGE, W_NIB) and 16-bit multiply (MUL16, MAC16). Total: 65 atoms.
 
-**Extension 5 (QUALE).** A single symmetry-breaking atom that makes the algebra *rigid*. The 26 opaque atoms (D2 + IO + W32 + MUL) all have identical all-p Cayley rows; QUALE gives each a unique structurally-identifiable target in its column. All 66 atoms are now uniquely identifiable from the Cayley table alone — no term-level probing required. A dedicated hardware scanner (`CayleyScanner`) reads the Cayley ROM directly at boot, recovering the complete atom identity map in ~7,300 ROM reads.
+**Extension 5 (QUALE).** A single symmetry-breaking atom that makes the algebra *rigid*. The 26 opaque atoms (D2 + IO + W32 + MUL) all have identical all-p Cayley rows; QUALE gives each a unique structurally-identifiable target in its column. All 66 atoms are now uniquely identifiable from the Cayley table alone — no term-level probing required.
 
 Six machine-checked results, plus a computationally complete extension with hardware emulator. Self-description is possible. Communication is possible. Computation is possible. But the question of what's real cannot be settled by structure alone.
 
@@ -157,8 +157,6 @@ DistinctionStructures/
 │   ├── neural_machine.py                        # Neural-backend machine variant
 │   ├── llm_dot.py                               # LLM dot backend (Ollama) + mock fallback
 │   ├── llm_machine.py                           # LLM-backend machine variant
-│   ├── scanner.py                               # CayleyScanner: boot-time hardware recovery module
-│   ├── recovery.py                              # Black-box recovery via dispatch unit + scanner
 │   ├── debugger.py                              # Textual TUI debugger (--neural / --llm flags)
 │   ├── test_machine.py                          # Verification suite (4356 atom pairs, 768 ALU ops)
 │   ├── test_fingerprint.py                      # Fingerprint ROM algebra tests
@@ -331,13 +329,9 @@ A cycle-accurate emulator of the hardware architecture: Cayley ROM, IC74181 ALU,
 | Heap | SRAM (64-bit words) | Term storage (tag + left + right + meta) |
 | Stack | SRAM (64-bit words) | Eval/apply continuation stack |
 | UART | 16-byte TX/RX FIFOs | Byte-level IO |
-| Scanner | CayleyScanner | Boot-time atom identity recovery from ROM |
-
 **Word format:** 64 bits — 4-bit tag, 24-bit left, 24-bit right, 12-bit meta. 17 tag types covering atoms, quoted terms, applications, ALU partials, IO partials, bundles, W32 values, W16 values, pack state, W32/MUL operation partials, and extended operations.
 
 **State machine:** FETCH → DECODE → EVAL_R → APPLY → dispatch → RETURN. The dispatch unit routes based on tag and atom index, handles Cayley ROM lookup, ALU firing, partial application building, IO operations, W32/MUL wide arithmetic, and quote/eval/app/unapp.
-
-**CayleyScanner (boot-time recovery):** A hardware module that reads the Cayley ROM directly to identify all 66 atoms — no heap, no stack, no eval/apply. Runs at boot before the dispatch unit starts. Three phases: D1 recovery (absorbers/testers/encoders), nibble/ALU/QUALE identification, and QUALE column resolution of all 27 opaque atoms. Avg ~7,300 ROM reads per scrambled ROM.
 
 **Neural backend:** The emulator supports replacing the Cayley ROM with a trained MLP that memorizes the 66x66 dot table. A 3-layer network with hidden_dim=6 (1,302 parameters) achieves 100% accuracy on all 4,356 entries — 3.35x compression vs. the raw table. The first run trains and caches the model to `emulator/.cache/cayley_mlp.pt`; subsequent runs load instantly.
 
@@ -367,13 +361,6 @@ uv run python -m examples.llm_injection_demo
 # Step through with LLM backend in the TUI debugger
 uv run python -m emulator.debugger --llm examples/llm_demo.ds
 ```
-
-**Recovery comparison:**
-
-| Method | Atoms | Heap | Stack | Avg time (10 seeds) |
-|--------|-------|------|-------|---------------------|
-| CayleyScanner (hardware) | 66/66 | 0 | 0 | 0.02s |
-| Dispatch unit (eval/apply) | 66/66 | ~600 words | yes | 0.05s |
 
 ```bash
 # Run "Hello, world!" in the TUI debugger
@@ -450,8 +437,6 @@ The `kamea.py` module implements the full 66-atom algebra with verification suit
 
 The `kamea_blackbox.py` module implements term-level black-box recovery for a 48-atom subset (D1 + D2 + nibbles + ALU + N_SUCC + IO + QUALE), demonstrating that QUALE eliminates the need for term-level Phase 2/3 probing.
 
-The hardware `CayleyScanner` (`emulator/scanner.py`) recovers all 66 atoms from a scrambled Cayley ROM using only ROM reads — no heap, no stack, no eval/apply. Verified across 100+ seeds.
-
 The `ds_repl.py` interactive REPL provides an eval/apply interpreter for the full 66-atom algebra with real IO effects (stdout/stdin).
 
 The `rigid_census.py` script samples random magmas on n = 3..8 elements and computes structural statistics: automorphism group size, absorbers, identities, idempotents, row/column uniqueness, non-trivial sub-magmas, and the "structureless rigid" count.
@@ -477,6 +462,6 @@ If you use this work, please cite:
   author = {Stefano Palmieri},
   title = {Kamea: A Minimal Self-Modeling Framework},
   year = {2026},
-  note = {Lean 4 formalization (0 sorry) of five machine-checked results: existence (Δ₀, Δ₁), discoverability (8 recovery lemmas), actuality irreducibility, flat quoting (Δ₂), recursive evaluation (Δ₃). Python extension: 66-atom Kamea algebra with 74181 ALU, W32 wide arithmetic, MUL16 multiply, IO, and QUALE symmetry-breaker. Hardware emulator with CayleyScanner boot-time recovery. 100\% black-box recovery across 1000+ seeds.}
+  note = {Lean 4 formalization (0 sorry) of five machine-checked results: existence (Δ₀, Δ₁), discoverability (8 recovery lemmas), actuality irreducibility, flat quoting (Δ₂), recursive evaluation (Δ₃). Python extension: 66-atom Kamea algebra with 74181 ALU, W32 wide arithmetic, MUL16 multiply, IO, and QUALE symmetry-breaker. Hardware emulator with fingerprint-addressed ROM. 100\% black-box recovery across 1000+ seeds.}
 }
 ```
