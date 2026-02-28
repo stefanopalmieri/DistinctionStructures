@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from . import cayley
 from .fingerprint import NAME_TO_FP, FP_TO_NAME, NUM_FP
-from .scanner import CayleyScanner
 from .machine import (
     KameaMachine, S_FETCH, S_APPLY, S_DONE, S_HALTED,
     make_atom_word, make_app_word, make_quoted_word,
@@ -220,15 +219,6 @@ class EmulatorHost:
         r_fp = self.machine.cayley_rom.read(x_fp * NUM_FP + y_fp)
         self.machine.rom_reads += 1
         return r_fp
-
-    # -------------------------------------------------------------------
-    # Hardware scanner (boot-time recovery)
-    # -------------------------------------------------------------------
-
-    def scan_at_boot(self) -> dict[str, int]:
-        """Use hardware scanner to recover atom_map from Cayley ROM."""
-        scanner = CayleyScanner(self.machine.cayley_rom, cayley.NUM_ATOMS)
-        return scanner.scan()
 
     # -------------------------------------------------------------------
     # UART interface
